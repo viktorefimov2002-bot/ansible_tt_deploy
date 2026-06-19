@@ -89,12 +89,26 @@ Bootstrap поддерживает SSH по паролю и по ключу. Д�
 
 Пароль Vault нужно сохранить у себя: без него нельзя будет повторно использовать или расшифровать `vault.yml`. Если отказаться от Vault, секреты будут записаны в `vars.yml` в открытом виде, но с правами `600`.
 
+После успешной раскатки helper создает:
+
+- `deploy.sh` - повторный запуск установки/обновления с автоматическим подключением `vault.yml`, если он есть;
+- `uninstall.sh` - удаление с автоматическим подключением `vault.yml`, если он есть;
+- `deployment_info_<host>.md` - локальная памятка с путями клиентских конфигов, проверкой сервиса, firewall-пояснением и командами удаления.
+
+`deploy.sh` и `uninstall.sh` также проверяют, нужен ли `sshpass` для SSH по паролю. Если `sshpass` отсутствует, helper временно установит его через `apt-get`, запустит playbook и удалит обратно.
+
 ## Удаление и повторное тестирование
 
 Для быстрого демонтажа есть отдельный playbook:
 
 ```bash
-ansible-playbook -i inventory.ini uninstall.yml -e @vars.yml
+./uninstall.sh
+```
+
+Если запускать вручную и у вас есть `vault.yml`, добавьте vault-файл и ввод пароля Vault:
+
+```bash
+ansible-playbook -i inventory.ini uninstall.yml -e @vars.yml -e @vault.yml --ask-vault-pass
 ```
 
 По умолчанию он:
@@ -109,7 +123,7 @@ ansible-playbook -i inventory.ini uninstall.yml -e @vars.yml
 Let's Encrypt-сертификат и firewall-правила по умолчанию не удаляются, потому что они могут использоваться другими сервисами или быть управляемыми у провайдера. Для полного тестового сноса можно явно включить:
 
 ```bash
-ansible-playbook -i inventory.ini uninstall.yml -e @vars.yml \
+./uninstall.sh \
   -e trusttunnel_remove_letsencrypt_cert=true \
   -e trusttunnel_close_firewall=true
 ```
@@ -117,7 +131,7 @@ ansible-playbook -i inventory.ini uninstall.yml -e @vars.yml \
 Можно запустить удаление и через основной playbook:
 
 ```bash
-ansible-playbook -i inventory.ini site.yml -e @vars.yml -e trusttunnel_state=absent
+./deploy.sh -e trusttunnel_state=absent
 ```
 
 ## Важные переменные

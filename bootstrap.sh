@@ -5,6 +5,8 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 INVENTORY_FILE="${SCRIPT_DIR}/inventory.ini"
 VARS_FILE="${SCRIPT_DIR}/vars.yml"
 VAULT_FILE="${SCRIPT_DIR}/vault.yml"
+DEPLOY_HELPER_FILE="${SCRIPT_DIR}/deploy.sh"
+UNINSTALL_HELPER_FILE="${SCRIPT_DIR}/uninstall.sh"
 CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
 VAULT_PASSWORD_FILE=""
 
@@ -319,6 +321,7 @@ trusttunnel_acme_email: $(yaml_quote "$acme_email")
 trusttunnel_open_firewall: ${open_firewall}
 trusttunnel_firewall_backend: $(yaml_quote "$firewall_backend")
 trusttunnel_existing_credentials_file: $(yaml_quote "$existing_credentials_file")
+trusttunnel_ssh_auth_method: $(yaml_quote "$ssh_auth_method")
 EOF
 
 if [ "$use_existing_credentials" = "no" ] && [ "$vault_enabled" = "false" ]; then
@@ -381,6 +384,134 @@ fi
 chmod 600 "$VARS_FILE"
 chmod 600 "$INVENTORY_FILE"
 
+cat > "$DEPLOY_HELPER_FILE" <<'EOF'
+#!/bin/bash
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+EXTRA_VARS=(-e "@${SCRIPT_DIR}/vars.yml")
+NEEDS_SSHPASS="${TRUSTTUNNEL_NEEDS_SSHPASS:-auto}"
+SSHPASS_INSTALLED_BY_HELPER=false
+
+run_as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "This action requires root privileges, but sudo is not installed." >&2
+    return 1
+  fi
+}
+
+ensure_root_access() {
+  if [ "$(id -u)" -eq 0 ]; then
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo -v
+    return 0
+  fi
+  echo "This action requires root privileges, but sudo is not installed." >&2
+  return 1
+}
+
+install_sshpass() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Automatic sshpass installation is supported only on apt-based systems such as Ubuntu/Debian." >&2
+    return 1
+  fi
+
+  echo "Installing sshpass for Ansible password authentication..." >&2
+  ensure_root_access
+  if ! run_as_root apt-get update >/tmp/trusttunnel-sshpass-install.log 2>&1; then
+    echo "Failed to update apt package lists while installing sshpass." >&2
+    echo "See /tmp/trusttunnel-sshpass-install.log for details." >&2
+    return 1
+  fi
+  if ! run_as_root apt-get install -y sshpass >>/tmp/trusttunnel-sshpass-install.log 2>&1; then
+    echo "Failed to install sshpass." >&2
+    echo "See /tmp/trusttunnel-sshpass-install.log for details." >&2
+    return 1
+  fi
+  SSHPASS_INSTALLED_BY_HELPER=true
+  echo "sshpass was installed successfully." >&2
+}
+
+remove_sshpass() {
+  if [ "$SSHPASS_INSTALLED_BY_HELPER" != "true" ]; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Removing sshpass installed by this helper..." >&2
+  ensure_root_access
+  if ! run_as_root apt-get remove -y sshpass >/tmp/trusttunnel-sshpass-remove.log 2>&1; then
+    echo "Warning: failed to remove sshpass automatically. Please remove it manually if needed." >&2
+    echo "See /tmp/trusttunnel-sshpass-remove.log for details." >&2
+    return 1
+  fi
+  run_as_root apt-get autoremove -y >>/tmp/trusttunnel-sshpass-remove.log 2>&1 || true
+}
+
+cleanup() {
+  remove_sshpass || true
+}
+
+detect_sshpass_need() {
+  if [ "$NEEDS_SSHPASS" = "true" ] || [ "$NEEDS_SSHPASS" = "false" ]; then
+    return 0
+  fi
+
+  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq '^ansible_password:' "${SCRIPT_DIR}/vars.yml"; then
+    NEEDS_SSHPASS=true
+    return 0
+  fi
+
+  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq "^trusttunnel_ssh_auth_method: '?password'?" "${SCRIPT_DIR}/vars.yml"; then
+    NEEDS_SSHPASS=true
+    return 0
+  fi
+
+  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq "^trusttunnel_ssh_auth_method: '?key'?" "${SCRIPT_DIR}/vars.yml"; then
+    NEEDS_SSHPASS=false
+    return 0
+  fi
+
+  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
+    NEEDS_SSHPASS=true
+  else
+    NEEDS_SSHPASS=false
+  fi
+}
+
+ensure_sshpass() {
+  detect_sshpass_need
+  if [ "$NEEDS_SSHPASS" != "true" ]; then
+    return 0
+  fi
+  if command -v sshpass >/dev/null 2>&1; then
+    return 0
+  fi
+  install_sshpass
+}
+
+trap cleanup EXIT
+
+if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
+  EXTRA_VARS+=(-e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass)
+fi
+
+ensure_sshpass
+ansible-playbook -i "${SCRIPT_DIR}/inventory.ini" "${SCRIPT_DIR}/site.yml" "${EXTRA_VARS[@]}" "$@"
+EOF
+
+sed 's#\"${SCRIPT_DIR}/site.yml\"#\"${SCRIPT_DIR}/uninstall.yml\"#' "$DEPLOY_HELPER_FILE" > "$UNINSTALL_HELPER_FILE"
+
+chmod 700 "$DEPLOY_HELPER_FILE" "$UNINSTALL_HELPER_FILE"
+
 echo
 echo "Created:"
 echo "  $INVENTORY_FILE"
@@ -388,6 +519,8 @@ echo "  $VARS_FILE"
 if [ "$vault_enabled" = "true" ]; then
   echo "  $VAULT_FILE"
 fi
+echo "  $DEPLOY_HELPER_FILE"
+echo "  $UNINSTALL_HELPER_FILE"
 echo
 ansible_result=0
 if [ "$vault_enabled" = "true" ]; then
