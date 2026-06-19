@@ -55,7 +55,7 @@
 - name: Close firewall ports with firewalld
   when:
     - trusttunnel_close_firewall | bool
-    - trusttunnel_firewall_backend == 'firewalld'
+    - trusttunnel_effective_firewall_backend == 'firewalld'
   block:
     - name: Check firewalld availability for cleanup
       ansible.builtin.command:
@@ -100,7 +100,7 @@
     - 443/udp
   when:
     - trusttunnel_close_firewall | bool
-    - trusttunnel_firewall_backend == 'ufw'
+    - trusttunnel_effective_firewall_backend == 'ufw'
 
 - name: Check local client config directory
   ansible.builtin.stat:

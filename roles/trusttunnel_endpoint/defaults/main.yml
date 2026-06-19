@@ -19,7 +19,7 @@ trusttunnel_enable_speedtest_host: false
 trusttunnel_ping_hostname: ""
 trusttunnel_speedtest_hostname: ""
 
-trusttunnel_firewall_backend: firewalld
+trusttunnel_firewall_backend: auto
 trusttunnel_open_firewall: false
 trusttunnel_close_firewall: false
 
@@ -35,6 +35,7 @@ trusttunnel_dns_upstreams: []
 trusttunnel_client_username: ""
 trusttunnel_client_password: ""
 trusttunnel_clients: []
+trusttunnel_existing_credentials_file: ""
 
 trusttunnel_rules: []
 

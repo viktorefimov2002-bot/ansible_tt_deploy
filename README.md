@@ -25,6 +25,10 @@ ansible-playbook -i inventory.ini site.yml
 
 Плейбук спросит домен, публичный адрес, одного VPN-пользователя, режим сертификата и email для Let's Encrypt.
 
+`trusttunnel_domain` - это домен TrustTunnel endpoint для TLS/SNI и выпуска сертификата, например `vpn.example.com`. В режиме `letsencrypt` именно на него выпускается сертификат, поэтому DNS A/AAAA-запись должна указывать на сервер.
+
+`trusttunnel_public_address` - это адрес, который попадет в клиентские конфиги и к которому будут подключаться VPN-клиенты. TrustTunnel принимает `ip`, `ip:port`, `domain` или `domain:port`, например `vpn.example.com` или `vpn.example.com:443`. Если порт не указан, TrustTunnel берёт порт из `trusttunnel_listen_address`, по умолчанию это `443`. Явный `:443` не обязателен, но делает клиентский конфиг однозначным; если используется внешний NAT/LB или нестандартный порт, укажите именно внешний адрес для клиентов.
+
 ## Запуск через vars-файл
 
 Для повторяемой раскатки лучше использовать vars-файл:
@@ -46,6 +50,25 @@ trusttunnel_clients:
 
 Переменные `trusttunnel_client_username` и `trusttunnel_client_password` оставлены для совместимости с интерактивным режимом и используются, когда `trusttunnel_clients` пустой.
 
+### Миграция существующих VPN-клиентов
+
+Если нужно перенести клиентов со старого TrustTunnel-сервера, можно использовать готовый `credentials.toml` вместо создания нового пользователя.
+
+Положите файл, например, сюда:
+
+```bash
+cp credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
+```
+
+И задайте:
+
+```yaml
+trusttunnel_existing_credentials_file: credentials.toml
+trusttunnel_clients: []
+```
+
+Роль скопирует этот файл на новый сервер как `/opt/trusttunnel/credentials.toml`, извлечет из него `username`-значения и сгенерирует клиентские конфиги для найденных пользователей. Пароли клиентов при этом сохраняются из исходного `credentials.toml`.
+
 ## Bootstrap
 
 Есть тонкий helper-скрипт:
@@ -54,7 +77,17 @@ trusttunnel_clients:
 ./bootstrap.sh
 ```
 
-Он спрашивает базовые параметры, создает `inventory.ini` и `vars.yml`, выставляет `600` на `vars.yml`, затем запускает `ansible-playbook`. Основная логика установки остается в Ansible-роли.
+Он спрашивает базовые параметры, создает `inventory.ini` и `vars.yml`, выставляет `600` на оба файла, затем запускает `ansible-playbook`. Основная логика установки остается в Ansible-роли.
+
+Bootstrap поддерживает SSH по паролю и по ключу. Для SSH по паролю Ansible использует `sshpass`; если его нет, helper предложит временно установить `sshpass` через `apt-get` и удалить после завершения. Вывод `apt-get` для `sshpass` пишется в `/tmp/trusttunnel-sshpass-install.log` или `/tmp/trusttunnel-sshpass-remove.log`, а в терминале показывается только краткий статус или ошибка. Аналогично helper может временно установить Ansible, если его нет на управляющей машине.
+
+Если в ответах есть секреты, например SSH-пароль, sudo-пароль или пароль нового VPN-клиента, bootstrap предложит зашифровать их через Ansible Vault. При согласии:
+
+- обычные параметры сохраняются в `vars.yml`;
+- секреты сохраняются в зашифрованный `vault.yml`;
+- временный файл с паролем Vault создается в `/tmp`, используется только для текущего запуска и удаляется при выходе.
+
+Пароль Vault нужно сохранить у себя: без него нельзя будет повторно использовать или расшифровать `vault.yml`. Если отказаться от Vault, секреты будут записаны в `vars.yml` в открытом виде, но с правами `600`.
 
 ## Удаление и повторное тестирование
 
@@ -94,8 +127,9 @@ ansible-playbook -i inventory.ini site.yml -e @vars.yml -e trusttunnel_state=abs
 - `trusttunnel_listen_address` - адрес прослушивания, по умолчанию `0.0.0.0:443`.
 - `trusttunnel_cert_mode` - `letsencrypt`, `selfsigned` или `existing`.
 - `trusttunnel_existing_cert_chain_path` и `trusttunnel_existing_private_key_path` - пути к сертификату и ключу при `existing`.
+- `trusttunnel_existing_credentials_file` - имя файла из `roles/trusttunnel_endpoint/files/`, который нужно использовать как готовый `credentials.toml` для миграции клиентов.
 - `trusttunnel_open_firewall` - открыть 80/tcp, 443/tcp и 443/udp до выпуска сертификата, по умолчанию выключено.
-- `trusttunnel_firewall_backend` - `firewalld`, `ufw` или `none`.
+- `trusttunnel_firewall_backend` - `auto`, `ufw`, `firewalld` или `none`. При `auto` роль сначала ищет `ufw` как типичный backend Ubuntu, потом `firewalld`, иначе использует `none`.
 - `trusttunnel_fetch_client_configs` - забрать клиентские конфиги на управляющую машину, по умолчанию включено.
 - `trusttunnel_client_config_local_dir` - локальная директория для скачанных клиентских конфигов, по умолчанию `client_configs` рядом с playbook.
 - `trusttunnel_generate_client_random_prefix` - сгенерировать TLS random prefix и добавить allow-rule в `rules.toml`.

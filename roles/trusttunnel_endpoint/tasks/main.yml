@@ -5,6 +5,42 @@
       - trusttunnel_state in ['present', 'absent']
     fail_msg: "trusttunnel_state must be either present or absent."
 
+- name: Validate firewall backend
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_firewall_backend in ['auto', 'ufw', 'firewalld', 'none']
+    fail_msg: "trusttunnel_firewall_backend must be one of: auto, ufw, firewalld, none"
+  when: trusttunnel_open_firewall | bool or trusttunnel_close_firewall | bool
+
+- name: Check ufw availability for firewall auto-detection
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: trusttunnel_ufw_binary
+  when: trusttunnel_firewall_backend == 'auto'
+
+- name: Check firewalld availability for firewall auto-detection
+  ansible.builtin.stat:
+    path: /usr/bin/firewall-cmd
+  register: trusttunnel_firewalld_binary
+  when: trusttunnel_firewall_backend == 'auto'
+
+- name: Set effective firewall backend
+  ansible.builtin.set_fact:
+    trusttunnel_effective_firewall_backend: >-
+      {{ (trusttunnel_firewall_backend != 'auto')
+         | ternary(
+             trusttunnel_firewall_backend,
+             (trusttunnel_ufw_binary.stat.exists | default(false))
+             | ternary('ufw',
+               (trusttunnel_firewalld_binary.stat.exists | default(false))
+               | ternary('firewalld', 'none'))
+           ) }}
+
+- name: Show detected firewall backend
+  ansible.builtin.debug:
+    msg: "TrustTunnel firewall backend: {{ trusttunnel_effective_firewall_backend }}"
+  when: trusttunnel_open_firewall | bool or trusttunnel_close_firewall | bool
+
 - name: Remove TrustTunnel deployment
   ansible.builtin.include_tasks: uninstall.yml
   when: trusttunnel_state == 'absent'
@@ -13,12 +49,52 @@
   ansible.builtin.meta: end_host
   when: trusttunnel_state == 'absent'
 
+- name: Set credentials source mode
+  ansible.builtin.set_fact:
+    trusttunnel_use_existing_credentials: "{{ trusttunnel_existing_credentials_file | length > 0 }}"
+
+- name: Check existing TrustTunnel credentials file on controller
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/{{ trusttunnel_existing_credentials_file }}"
+  register: trusttunnel_existing_credentials_stat
+  delegate_to: localhost
+  become: false
+  when: trusttunnel_use_existing_credentials | bool
+
+- name: Validate existing TrustTunnel credentials file on controller
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_existing_credentials_stat.stat.exists
+      - trusttunnel_existing_credentials_stat.stat.isreg
+    fail_msg: "Existing credentials file must be placed at roles/trusttunnel_endpoint/files/{{ trusttunnel_existing_credentials_file }}."
+  when: trusttunnel_use_existing_credentials | bool
+
+- name: Read VPN usernames from existing TrustTunnel credentials
+  ansible.builtin.set_fact:
+    trusttunnel_effective_client_usernames: >-
+      {{
+        (lookup('ansible.builtin.file', role_path ~ '/files/' ~ trusttunnel_existing_credentials_file)
+         | regex_findall('(?m)^\\s*username\\s*=\\s*"([^"]+)"'))
+        +
+        (lookup('ansible.builtin.file', role_path ~ '/files/' ~ trusttunnel_existing_credentials_file)
+         | regex_findall("(?m)^\\s*username\\s*=\\s*'([^']+)'"))
+      }}
+  when: trusttunnel_use_existing_credentials | bool
+  no_log: true
+
 - name: Build effective client list
   ansible.builtin.set_fact:
     trusttunnel_effective_clients: >-
       {{ trusttunnel_clients
          if (trusttunnel_clients | length > 0)
          else [{'username': trusttunnel_client_username, 'password': trusttunnel_client_password}] }}
+  when: not (trusttunnel_use_existing_credentials | bool)
+  no_log: true
+
+- name: Set VPN usernames from generated credentials
+  ansible.builtin.set_fact:
+    trusttunnel_effective_client_usernames: "{{ trusttunnel_effective_clients | map(attribute='username') | list }}"
+  when: not (trusttunnel_use_existing_credentials | bool)
   no_log: true
 
 - name: Validate supported platform
@@ -34,13 +110,6 @@
       - trusttunnel_cert_mode in ['letsencrypt', 'selfsigned', 'existing']
     fail_msg: "trusttunnel_cert_mode must be one of: letsencrypt, selfsigned, existing"
 
-- name: Validate firewall backend
-  ansible.builtin.assert:
-    that:
-      - trusttunnel_firewall_backend in ['firewalld', 'ufw', 'none']
-    fail_msg: "trusttunnel_firewall_backend must be one of: firewalld, ufw, none"
-  when: trusttunnel_open_firewall | bool
-
 - name: Validate client configuration format
   ansible.builtin.assert:
     that:
@@ -51,8 +120,8 @@
   ansible.builtin.assert:
     that:
       - trusttunnel_domain | length > 0
-      - trusttunnel_effective_clients | length > 0
-    fail_msg: "Domain and at least one VPN client with username/password are required."
+      - trusttunnel_effective_client_usernames | length > 0
+    fail_msg: "Domain and at least one VPN client are required."
   no_log: true
 
 - name: Validate VPN clients
@@ -65,6 +134,16 @@
       - item.username is match('^[A-Za-z0-9_.@-]+$')
     fail_msg: "Each TrustTunnel VPN client must have username and password. Usernames may contain only letters, digits, underscore, dot, at-sign and hyphen."
   loop: "{{ trusttunnel_effective_clients }}"
+  when: not (trusttunnel_use_existing_credentials | bool)
+  no_log: true
+
+- name: Validate VPN usernames
+  ansible.builtin.assert:
+    that:
+      - item | length > 0
+      - item is match('^[A-Za-z0-9_.@-]+$')
+    fail_msg: "VPN usernames may contain only letters, digits, underscore, dot, at-sign and hyphen."
+  loop: "{{ trusttunnel_effective_client_usernames }}"
   no_log: true
 
 - name: Validate connection rules
@@ -176,7 +255,7 @@
 - name: Open firewall ports with firewalld
   when:
     - trusttunnel_open_firewall | bool
-    - trusttunnel_firewall_backend == 'firewalld'
+    - trusttunnel_effective_firewall_backend == 'firewalld'
   block:
     - name: Check firewalld availability
       ansible.builtin.command:
@@ -214,7 +293,7 @@
     - 443/udp
   when:
     - trusttunnel_open_firewall | bool
-    - trusttunnel_firewall_backend == 'ufw'
+    - trusttunnel_effective_firewall_backend == 'ufw'
 
 - name: Generate self-signed certificate
   ansible.builtin.command:
@@ -305,6 +384,18 @@
     group: root
     mode: "0600"
   notify: Restart TrustTunnel
+  when: not (trusttunnel_use_existing_credentials | bool)
+  no_log: true
+
+- name: Copy existing TrustTunnel credentials
+  ansible.builtin.copy:
+    src: "{{ trusttunnel_existing_credentials_file }}"
+    dest: "{{ trusttunnel_install_dir }}/credentials.toml"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart TrustTunnel
+  when: trusttunnel_use_existing_credentials | bool
   no_log: true
 
 - name: Render TrustTunnel rules
@@ -321,7 +412,7 @@
     chdir: "{{ trusttunnel_install_dir }}"
     cmd: >-
       {{ (trusttunnel_install_dir ~ '/trusttunnel_endpoint') | quote }} vpn.toml hosts.toml
-      -c {{ item.username | quote }}
+      -c {{ item | quote }}
       -a {{ trusttunnel_effective_public_address | quote }}
       --format {{ trusttunnel_client_config_format | quote }}
       --name {{ trusttunnel_client_config_name | quote }}
@@ -331,7 +422,7 @@
       {% if trusttunnel_generate_client_random_prefix %}
       --generate-client-random-prefix
       {% endif %}
-  loop: "{{ trusttunnel_effective_clients }}"
+  loop: "{{ trusttunnel_effective_client_usernames }}"
   register: trusttunnel_client_config_results
   changed_when: trusttunnel_generate_client_random_prefix | bool
   when: trusttunnel_generate_client_config | bool
@@ -339,7 +430,7 @@
 
 - name: Save client configurations on server
   ansible.builtin.copy:
-    dest: "{{ trusttunnel_install_dir }}/client_{{ item.item.username }}.{{ trusttunnel_client_config_format }}"
+    dest: "{{ trusttunnel_install_dir }}/client_{{ item.item }}.{{ trusttunnel_client_config_format }}"
     owner: root
     group: root
     mode: "0600"
@@ -361,10 +452,10 @@
 
 - name: Fetch client configurations to controller
   ansible.builtin.fetch:
-    src: "{{ trusttunnel_install_dir }}/client_{{ item.username }}.{{ trusttunnel_client_config_format }}"
-    dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item.username }}.{{ trusttunnel_client_config_format }}"
+    src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
+    dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
     flat: true
-  loop: "{{ trusttunnel_effective_clients }}"
+  loop: "{{ trusttunnel_effective_client_usernames }}"
   when:
     - trusttunnel_generate_client_config | bool
     - trusttunnel_fetch_client_configs | bool

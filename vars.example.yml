@@ -5,7 +5,7 @@ trusttunnel_cert_mode: letsencrypt
 trusttunnel_acme_email: admin@example.com
 
 trusttunnel_open_firewall: true
-trusttunnel_firewall_backend: firewalld
+trusttunnel_firewall_backend: auto
 
 trusttunnel_client_username: user1
 trusttunnel_client_password: change-me
@@ -17,6 +17,9 @@ trusttunnel_clients:
     password: change-me-too
 
 # Optional examples:
+# To reuse an existing TrustTunnel credentials file, place it under
+# roles/trusttunnel_endpoint/files/credentials.toml and set:
+# trusttunnel_existing_credentials_file: credentials.toml
 # trusttunnel_install_version: "1.0.33"
 # trusttunnel_client_config_format: deeplink
 # trusttunnel_generate_client_random_prefix: true
