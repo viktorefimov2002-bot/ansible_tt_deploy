@@ -1,0 +1,396 @@
+---
+- name: Validate requested TrustTunnel state
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_state in ['present', 'absent']
+    fail_msg: "trusttunnel_state must be either present or absent."
+
+- name: Remove TrustTunnel deployment
+  ansible.builtin.include_tasks: uninstall.yml
+  when: trusttunnel_state == 'absent'
+
+- name: Stop after TrustTunnel removal
+  ansible.builtin.meta: end_host
+  when: trusttunnel_state == 'absent'
+
+- name: Build effective client list
+  ansible.builtin.set_fact:
+    trusttunnel_effective_clients: >-
+      {{ trusttunnel_clients
+         if (trusttunnel_clients | length > 0)
+         else [{'username': trusttunnel_client_username, 'password': trusttunnel_client_password}] }}
+  no_log: true
+
+- name: Validate supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Linux'
+      - ansible_architecture in ['x86_64', 'aarch64']
+    fail_msg: "TrustTunnel Ansible deployment supports Linux x86_64 and aarch64 targets."
+
+- name: Validate supported certificate mode
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_cert_mode in ['letsencrypt', 'selfsigned', 'existing']
+    fail_msg: "trusttunnel_cert_mode must be one of: letsencrypt, selfsigned, existing"
+
+- name: Validate firewall backend
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_firewall_backend in ['firewalld', 'ufw', 'none']
+    fail_msg: "trusttunnel_firewall_backend must be one of: firewalld, ufw, none"
+  when: trusttunnel_open_firewall | bool
+
+- name: Validate client configuration format
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_client_config_format in ['toml', 'deeplink']
+    fail_msg: "trusttunnel_client_config_format must be either toml or deeplink."
+
+- name: Validate required input
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_domain | length > 0
+      - trusttunnel_effective_clients | length > 0
+    fail_msg: "Domain and at least one VPN client with username/password are required."
+  no_log: true
+
+- name: Validate VPN clients
+  ansible.builtin.assert:
+    that:
+      - item.username is defined
+      - item.password is defined
+      - item.username | length > 0
+      - item.password | length > 0
+      - item.username is match('^[A-Za-z0-9_.@-]+$')
+    fail_msg: "Each TrustTunnel VPN client must have username and password. Usernames may contain only letters, digits, underscore, dot, at-sign and hyphen."
+  loop: "{{ trusttunnel_effective_clients }}"
+  no_log: true
+
+- name: Validate connection rules
+  ansible.builtin.assert:
+    that:
+      - item.action is defined
+      - item.action in ['allow', 'deny']
+      - item.cidr is defined or item.client_random_prefix is defined
+    fail_msg: "Each TrustTunnel rule must have action=allow|deny and at least one matcher: cidr or client_random_prefix."
+  loop: "{{ trusttunnel_rules | default([]) }}"
+
+- name: Validate Let's Encrypt input
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_acme_email | length > 0
+    fail_msg: "trusttunnel_acme_email is required when trusttunnel_cert_mode=letsencrypt."
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Validate existing certificate paths
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_existing_cert_chain_path | length > 0
+      - trusttunnel_existing_private_key_path | length > 0
+    fail_msg: "Existing certificate mode requires trusttunnel_existing_cert_chain_path and trusttunnel_existing_private_key_path."
+  when: trusttunnel_cert_mode == 'existing'
+
+- name: Check that HTTP challenge port is free for Certbot standalone
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: 80
+    state: stopped
+    timeout: 1
+    msg: "Port 80 is already in use. Certbot standalone needs it free during certificate issuance/renewal."
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Set effective client address
+  ansible.builtin.set_fact:
+    trusttunnel_effective_public_address: "{{ trusttunnel_public_address | default(trusttunnel_domain, true) }}"
+
+- name: Set certificate paths
+  ansible.builtin.set_fact:
+    trusttunnel_cert_chain_path: >-
+      {{ (trusttunnel_cert_mode == 'letsencrypt')
+         | ternary('/etc/letsencrypt/live/' ~ trusttunnel_domain ~ '/fullchain.pem',
+           (trusttunnel_cert_mode == 'selfsigned')
+           | ternary(trusttunnel_install_dir ~ '/certs/cert.pem', trusttunnel_existing_cert_chain_path)) }}
+    trusttunnel_private_key_path: >-
+      {{ (trusttunnel_cert_mode == 'letsencrypt')
+         | ternary('/etc/letsencrypt/live/' ~ trusttunnel_domain ~ '/privkey.pem',
+           (trusttunnel_cert_mode == 'selfsigned')
+           | ternary(trusttunnel_install_dir ~ '/certs/key.pem', trusttunnel_existing_private_key_path)) }}
+
+- name: Install base packages
+  ansible.builtin.package:
+    name:
+      - ca-certificates
+      - curl
+      - openssl
+      - tar
+    state: present
+
+- name: Install Certbot for Let's Encrypt
+  ansible.builtin.package:
+    name: certbot
+    state: present
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Ensure TrustTunnel install directory exists
+  ansible.builtin.file:
+    path: "{{ trusttunnel_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download TrustTunnel installer
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/TrustTunnel/TrustTunnel/refs/heads/master/scripts/install.sh
+    dest: /tmp/trusttunnel-install.sh
+    mode: "0755"
+
+- name: Stop TrustTunnel before install or update
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_service_name }}"
+    state: stopped
+  failed_when: false
+
+- name: Install TrustTunnel endpoint release
+  ansible.builtin.command:
+    cmd: >-
+      sh /tmp/trusttunnel-install.sh
+      -o {{ trusttunnel_install_dir | quote }}
+      {% if trusttunnel_install_version | default('auto') not in ['auto', 'latest', ''] %}
+      -V {{ trusttunnel_install_version | quote }}
+      {% endif %}
+      -a y
+  register: trusttunnel_install_result
+  changed_when: "'installed to' in trusttunnel_install_result.stdout or 'Installing TrustTunnel' in trusttunnel_install_result.stdout"
+
+- name: Ensure certificate directory exists for self-signed mode
+  ansible.builtin.file:
+    path: "{{ trusttunnel_install_dir }}/certs"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: trusttunnel_cert_mode == 'selfsigned'
+
+- name: Open firewall ports with firewalld
+  when:
+    - trusttunnel_open_firewall | bool
+    - trusttunnel_firewall_backend == 'firewalld'
+  block:
+    - name: Check firewalld availability
+      ansible.builtin.command:
+        cmd: firewall-cmd --state
+      register: trusttunnel_firewalld_state
+      changed_when: false
+      failed_when: trusttunnel_firewalld_state.rc != 0
+
+    - name: Open HTTP and HTTPS ports in firewalld
+      ansible.builtin.command:
+        cmd: "firewall-cmd --permanent --add-port={{ item }}"
+      register: trusttunnel_firewalld_ports
+      changed_when:
+        - "'success' in trusttunnel_firewalld_ports.stdout"
+        - "'ALREADY_ENABLED' not in trusttunnel_firewalld_ports.stderr"
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 443/udp
+
+    - name: Reload firewalld
+      ansible.builtin.command:
+        cmd: firewall-cmd --reload
+      changed_when: true
+      when: trusttunnel_firewalld_ports.changed
+
+- name: Open firewall ports with ufw
+  ansible.builtin.command:
+    cmd: "ufw allow {{ item }}"
+  register: trusttunnel_ufw_ports
+  changed_when: "'Rule added' in trusttunnel_ufw_ports.stdout or 'Rules updated' in trusttunnel_ufw_ports.stdout"
+  loop:
+    - 80/tcp
+    - 443/tcp
+    - 443/udp
+  when:
+    - trusttunnel_open_firewall | bool
+    - trusttunnel_firewall_backend == 'ufw'
+
+- name: Generate self-signed certificate
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -nodes -newkey rsa:2048
+      -days {{ trusttunnel_selfsigned_days }}
+      -keyout {{ trusttunnel_private_key_path | quote }}
+      -out {{ trusttunnel_cert_chain_path | quote }}
+      -subj {{ ('/CN=' ~ trusttunnel_domain) | quote }}
+  args:
+    creates: "{{ trusttunnel_cert_chain_path }}"
+  when: trusttunnel_cert_mode == 'selfsigned'
+
+- name: Obtain or renew Let's Encrypt certificate
+  ansible.builtin.command:
+    cmd: >-
+      certbot certonly --standalone --non-interactive --agree-tos
+      --email {{ trusttunnel_acme_email | quote }}
+      -d {{ trusttunnel_domain | quote }}
+      --keep-until-expiring
+  register: trusttunnel_certbot_result
+  changed_when: "'Successfully received certificate' in trusttunnel_certbot_result.stdout"
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Check Certbot systemd timer availability
+  ansible.builtin.command:
+    cmd: systemctl list-unit-files certbot.timer
+  register: trusttunnel_certbot_timer_check
+  changed_when: false
+  failed_when: false
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Enable Certbot automatic renewal timer
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: true
+    state: started
+  when:
+    - trusttunnel_cert_mode == 'letsencrypt'
+    - trusttunnel_certbot_timer_check.rc == 0
+    - "'certbot.timer' in trusttunnel_certbot_timer_check.stdout"
+
+- name: Install cron fallback for Certbot automatic renewal
+  ansible.builtin.cron:
+    name: Certbot automatic renewal for TrustTunnel
+    user: root
+    minute: "0"
+    hour: "3"
+    job: "certbot renew --quiet"
+  when:
+    - trusttunnel_cert_mode == 'letsencrypt'
+    - trusttunnel_certbot_timer_check.rc != 0 or 'certbot.timer' not in trusttunnel_certbot_timer_check.stdout
+
+- name: Install Certbot deploy hook for TrustTunnel reload
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/trusttunnel-reload.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      systemctl reload {{ trusttunnel_service_name }} >/dev/null 2>&1 || systemctl restart {{ trusttunnel_service_name }} >/dev/null 2>&1 || true
+  when: trusttunnel_cert_mode == 'letsencrypt'
+
+- name: Render TrustTunnel endpoint config
+  ansible.builtin.template:
+    src: vpn.toml.j2
+    dest: "{{ trusttunnel_install_dir }}/vpn.toml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart TrustTunnel
+
+- name: Render TrustTunnel TLS hosts config
+  ansible.builtin.template:
+    src: hosts.toml.j2
+    dest: "{{ trusttunnel_install_dir }}/hosts.toml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart TrustTunnel
+
+- name: Render TrustTunnel credentials
+  ansible.builtin.template:
+    src: credentials.toml.j2
+    dest: "{{ trusttunnel_install_dir }}/credentials.toml"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart TrustTunnel
+  no_log: true
+
+- name: Render TrustTunnel rules
+  ansible.builtin.template:
+    src: rules.toml.j2
+    dest: "{{ trusttunnel_install_dir }}/rules.toml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart TrustTunnel
+
+- name: Generate client configurations
+  ansible.builtin.command:
+    chdir: "{{ trusttunnel_install_dir }}"
+    cmd: >-
+      {{ (trusttunnel_install_dir ~ '/trusttunnel_endpoint') | quote }} vpn.toml hosts.toml
+      -c {{ item.username | quote }}
+      -a {{ trusttunnel_effective_public_address | quote }}
+      --format {{ trusttunnel_client_config_format | quote }}
+      --name {{ trusttunnel_client_config_name | quote }}
+      {% for dns_upstream in trusttunnel_dns_upstreams %}
+      --dns-upstream {{ dns_upstream | quote }}
+      {% endfor %}
+      {% if trusttunnel_generate_client_random_prefix %}
+      --generate-client-random-prefix
+      {% endif %}
+  loop: "{{ trusttunnel_effective_clients }}"
+  register: trusttunnel_client_config_results
+  changed_when: trusttunnel_generate_client_random_prefix | bool
+  when: trusttunnel_generate_client_config | bool
+  no_log: true
+
+- name: Save client configurations on server
+  ansible.builtin.copy:
+    dest: "{{ trusttunnel_install_dir }}/client_{{ item.item.username }}.{{ trusttunnel_client_config_format }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ item.stdout }}\n"
+  loop: "{{ trusttunnel_client_config_results.results | default([]) }}"
+  when: trusttunnel_generate_client_config | bool
+  no_log: true
+
+- name: Ensure local client config directory exists
+  ansible.builtin.file:
+    path: "{{ trusttunnel_client_config_local_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when:
+    - trusttunnel_generate_client_config | bool
+    - trusttunnel_fetch_client_configs | bool
+
+- name: Fetch client configurations to controller
+  ansible.builtin.fetch:
+    src: "{{ trusttunnel_install_dir }}/client_{{ item.username }}.{{ trusttunnel_client_config_format }}"
+    dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item.username }}.{{ trusttunnel_client_config_format }}"
+    flat: true
+  loop: "{{ trusttunnel_effective_clients }}"
+  when:
+    - trusttunnel_generate_client_config | bool
+    - trusttunnel_fetch_client_configs | bool
+  no_log: true
+
+- name: Render systemd service
+  ansible.builtin.template:
+    src: trusttunnel.service.j2
+    dest: "/etc/systemd/system/{{ trusttunnel_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart TrustTunnel
+
+- name: Enable and start TrustTunnel
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Show generated client configuration paths
+  ansible.builtin.debug:
+    msg:
+      - "Client configs saved on server under {{ trusttunnel_install_dir }}/client_<username>.{{ trusttunnel_client_config_format }}"
+      - "Fetched configs saved locally under {{ trusttunnel_client_config_local_dir }}"
+  when: trusttunnel_generate_client_config | bool

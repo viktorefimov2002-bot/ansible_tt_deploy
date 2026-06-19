@@ -1,0 +1,12 @@
+# Rules are evaluated in order. If no rules match, the connection is allowed.
+{% for rule in trusttunnel_rules | default([]) %}
+[[rule]]
+{% if rule.cidr is defined %}
+cidr = {{ rule.cidr | to_json }}
+{% endif %}
+{% if rule.client_random_prefix is defined %}
+client_random_prefix = {{ rule.client_random_prefix | to_json }}
+{% endif %}
+action = {{ rule.action | to_json }}
+
+{% endfor %}

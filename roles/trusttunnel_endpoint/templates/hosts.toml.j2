@@ -1,0 +1,18 @@
+[[main_hosts]]
+hostname = {{ trusttunnel_domain | to_json }}
+cert_chain_path = {{ trusttunnel_cert_chain_path | to_json }}
+private_key_path = {{ trusttunnel_private_key_path | to_json }}
+
+{% if trusttunnel_enable_ping_host | bool %}
+[[ping_hosts]]
+hostname = {{ (trusttunnel_ping_hostname | default('ping.' ~ trusttunnel_domain, true)) | to_json }}
+cert_chain_path = {{ trusttunnel_cert_chain_path | to_json }}
+private_key_path = {{ trusttunnel_private_key_path | to_json }}
+{% endif %}
+
+{% if trusttunnel_enable_speedtest_host | bool %}
+[[speedtest_hosts]]
+hostname = {{ (trusttunnel_speedtest_hostname | default('speed.' ~ trusttunnel_domain, true)) | to_json }}
+cert_chain_path = {{ trusttunnel_cert_chain_path | to_json }}
+private_key_path = {{ trusttunnel_private_key_path | to_json }}
+{% endif %}

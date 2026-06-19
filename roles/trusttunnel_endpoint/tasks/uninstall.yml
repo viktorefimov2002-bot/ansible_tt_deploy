@@ -1,0 +1,139 @@
+---
+- name: Stop TrustTunnel service
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_service_name }}"
+    state: stopped
+  failed_when: false
+
+- name: Disable TrustTunnel service
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_service_name }}"
+    enabled: false
+  failed_when: false
+
+- name: Remove TrustTunnel systemd unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ trusttunnel_service_name }}.service"
+    state: absent
+  notify: Reload systemd
+
+- name: Flush handlers after unit removal
+  ansible.builtin.meta: flush_handlers
+
+- name: Remove Certbot deploy hook
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy/trusttunnel-reload.sh
+    state: absent
+  when: trusttunnel_remove_certbot_renewal | bool
+
+- name: Remove Certbot cron fallback
+  ansible.builtin.cron:
+    name: Certbot automatic renewal for TrustTunnel
+    user: root
+    state: absent
+  when: trusttunnel_remove_certbot_renewal | bool
+
+- name: Delete Let's Encrypt certificate for TrustTunnel domain
+  ansible.builtin.command:
+    cmd: "certbot delete --cert-name {{ trusttunnel_domain | quote }} --non-interactive"
+  register: trusttunnel_certbot_delete_result
+  changed_when: trusttunnel_certbot_delete_result.rc == 0
+  failed_when:
+    - trusttunnel_certbot_delete_result.rc != 0
+    - "'not found' not in (trusttunnel_certbot_delete_result.stderr | lower)"
+    - "'no certificate found' not in (trusttunnel_certbot_delete_result.stderr | lower)"
+  when:
+    - trusttunnel_remove_letsencrypt_cert | bool
+    - trusttunnel_domain | default('') | length > 0
+
+- name: Remove TrustTunnel install directory
+  ansible.builtin.file:
+    path: "{{ trusttunnel_install_dir }}"
+    state: absent
+  when: trusttunnel_remove_install_dir | bool
+
+- name: Close firewall ports with firewalld
+  when:
+    - trusttunnel_close_firewall | bool
+    - trusttunnel_firewall_backend == 'firewalld'
+  block:
+    - name: Check firewalld availability for cleanup
+      ansible.builtin.command:
+        cmd: firewall-cmd --state
+      register: trusttunnel_firewalld_cleanup_state
+      changed_when: false
+      failed_when: trusttunnel_firewalld_cleanup_state.rc != 0
+
+    - name: Remove HTTP and HTTPS ports from firewalld
+      ansible.builtin.command:
+        cmd: "firewall-cmd --permanent --remove-port={{ item }}"
+      register: trusttunnel_firewalld_removed_ports
+      changed_when:
+        - "'success' in trusttunnel_firewalld_removed_ports.stdout"
+        - "'NOT_ENABLED' not in trusttunnel_firewalld_removed_ports.stderr"
+        - "'not enabled' not in (trusttunnel_firewalld_removed_ports.stderr | lower)"
+      failed_when:
+        - trusttunnel_firewalld_removed_ports.rc != 0
+        - "'not enabled' not in (trusttunnel_firewalld_removed_ports.stderr | lower)"
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 443/udp
+
+    - name: Reload firewalld after cleanup
+      ansible.builtin.command:
+        cmd: firewall-cmd --reload
+      changed_when: true
+      when: trusttunnel_firewalld_removed_ports.changed
+
+- name: Close firewall ports with ufw
+  ansible.builtin.command:
+    cmd: "ufw delete allow {{ item }}"
+  register: trusttunnel_ufw_removed_ports
+  changed_when: "'Rule deleted' in trusttunnel_ufw_removed_ports.stdout"
+  failed_when:
+    - trusttunnel_ufw_removed_ports.rc != 0
+    - "'could not delete non-existent rule' not in (trusttunnel_ufw_removed_ports.stderr | lower)"
+  loop:
+    - 80/tcp
+    - 443/tcp
+    - 443/udp
+  when:
+    - trusttunnel_close_firewall | bool
+    - trusttunnel_firewall_backend == 'ufw'
+
+- name: Check local client config directory
+  ansible.builtin.stat:
+    path: "{{ trusttunnel_client_config_local_dir }}"
+  register: trusttunnel_local_client_config_dir
+  delegate_to: localhost
+  become: false
+  when: trusttunnel_remove_local_client_configs | bool
+
+- name: Find fetched client configurations on controller
+  ansible.builtin.find:
+    paths: "{{ trusttunnel_client_config_local_dir }}"
+    patterns: "{{ inventory_hostname }}_client_*.{{ trusttunnel_client_config_format }}"
+    file_type: file
+  register: trusttunnel_local_client_configs
+  delegate_to: localhost
+  become: false
+  when:
+    - trusttunnel_remove_local_client_configs | bool
+    - trusttunnel_local_client_config_dir.stat.exists | default(false)
+
+- name: Remove fetched client configurations from controller
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ trusttunnel_local_client_configs.files | default([]) }}"
+  delegate_to: localhost
+  become: false
+  when: trusttunnel_remove_local_client_configs | bool
+
+- name: Report TrustTunnel cleanup result
+  ansible.builtin.debug:
+    msg:
+      - "TrustTunnel service, unit and install files were removed from {{ inventory_hostname }}."
+      - "Let's Encrypt certificate was removed only if trusttunnel_remove_letsencrypt_cert=true."
+      - "Firewall ports were closed only if trusttunnel_close_firewall=true."

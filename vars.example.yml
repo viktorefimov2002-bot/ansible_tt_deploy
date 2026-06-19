@@ -1,0 +1,33 @@
+---
+trusttunnel_domain: vpn.example.com
+trusttunnel_public_address: vpn.example.com:443
+trusttunnel_cert_mode: letsencrypt
+trusttunnel_acme_email: admin@example.com
+
+trusttunnel_open_firewall: true
+trusttunnel_firewall_backend: firewalld
+
+trusttunnel_client_username: user1
+trusttunnel_client_password: change-me
+
+trusttunnel_clients:
+  - username: user1
+    password: change-me
+  - username: user2
+    password: change-me-too
+
+# Optional examples:
+# trusttunnel_install_version: "1.0.33"
+# trusttunnel_client_config_format: deeplink
+# trusttunnel_generate_client_random_prefix: true
+# trusttunnel_dns_upstreams:
+#   - 1.1.1.1:53
+#   - 8.8.8.8:53
+# trusttunnel_rules:
+#   - cidr: 10.0.0.0/8
+#     action: deny
+#
+# Uninstall controls:
+# trusttunnel_remove_install_dir: true
+# trusttunnel_remove_letsencrypt_cert: false
+# trusttunnel_close_firewall: false

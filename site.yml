@@ -1,0 +1,36 @@
+---
+- name: Install and configure TrustTunnel Endpoint
+  hosts: trusttunnel
+  become: true
+  gather_facts: true
+
+  vars_prompt:
+    - name: trusttunnel_domain
+      prompt: "TrustTunnel domain, for example vpn.example.com"
+      private: false
+
+    - name: trusttunnel_public_address
+      prompt: "Public client address, for example vpn.example.com:443 (empty = domain from previous answer)"
+      private: false
+      default: ""
+
+    - name: trusttunnel_client_username
+      prompt: "VPN username (used when trusttunnel_clients is empty)"
+      private: false
+
+    - name: trusttunnel_client_password
+      prompt: "VPN password (used when trusttunnel_clients is empty)"
+      private: true
+
+    - name: trusttunnel_cert_mode
+      prompt: "Certificate mode: letsencrypt, selfsigned, existing"
+      private: false
+      default: "letsencrypt"
+
+    - name: trusttunnel_acme_email
+      prompt: "Let's Encrypt email (required only for letsencrypt)"
+      private: false
+      default: ""
+
+  roles:
+    - role: trusttunnel_endpoint

@@ -1,0 +1,42 @@
+---
+trusttunnel_state: present
+trusttunnel_install_version: auto
+trusttunnel_install_dir: /opt/trusttunnel
+trusttunnel_service_name: trusttunnel
+
+trusttunnel_listen_address: "0.0.0.0:443"
+trusttunnel_ipv6_available: true
+trusttunnel_allow_private_network_connections: false
+
+trusttunnel_cert_mode: letsencrypt
+trusttunnel_acme_email: ""
+trusttunnel_existing_cert_chain_path: ""
+trusttunnel_existing_private_key_path: ""
+trusttunnel_selfsigned_days: 825
+
+trusttunnel_enable_ping_host: false
+trusttunnel_enable_speedtest_host: false
+trusttunnel_ping_hostname: ""
+trusttunnel_speedtest_hostname: ""
+
+trusttunnel_firewall_backend: firewalld
+trusttunnel_open_firewall: false
+trusttunnel_close_firewall: false
+
+trusttunnel_client_config_format: toml
+trusttunnel_generate_client_config: true
+trusttunnel_generate_client_random_prefix: false
+trusttunnel_client_config_name: "TrustTunnel"
+trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
+trusttunnel_fetch_client_configs: true
+trusttunnel_remove_local_client_configs: true
+trusttunnel_dns_upstreams: []
+
+trusttunnel_client_username: ""
+trusttunnel_client_password: ""
+trusttunnel_clients: []
+trusttunnel_rules: []
+
+trusttunnel_remove_install_dir: true
+trusttunnel_remove_letsencrypt_cert: false
+trusttunnel_remove_certbot_renewal: true

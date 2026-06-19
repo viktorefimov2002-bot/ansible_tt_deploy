@@ -1,0 +1,20 @@
+[Unit]
+Description=TrustTunnel endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ trusttunnel_install_dir }}
+ExecStart={{ trusttunnel_install_dir }}/trusttunnel_endpoint vpn.toml hosts.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths={{ trusttunnel_install_dir }}
+
+[Install]
+WantedBy=multi-user.target
