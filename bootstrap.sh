@@ -263,6 +263,12 @@ acme_email=""
 if [ "$cert_mode" = "letsencrypt" ]; then
   acme_email=$(prompt "Let's Encrypt email")
 fi
+existing_cert_chain_path=""
+existing_private_key_path=""
+if [ "$cert_mode" = "existing" ]; then
+  existing_cert_chain_path=$(prompt "Existing certificate full chain path on remote server" "/etc/letsencrypt/live/${domain}/fullchain.pem")
+  existing_private_key_path=$(prompt "Existing certificate private key path on remote server" "/etc/letsencrypt/live/${domain}/privkey.pem")
+fi
 use_existing_credentials=$(prompt_yes_no "Use an existing TrustTunnel credentials.toml to preserve VPN clients? yes/no" "no")
 existing_credentials_file=""
 vpn_username=""
@@ -318,6 +324,8 @@ trusttunnel_domain: $(yaml_quote "$domain")
 trusttunnel_public_address: $(yaml_quote "$public_address")
 trusttunnel_cert_mode: $(yaml_quote "$cert_mode")
 trusttunnel_acme_email: $(yaml_quote "$acme_email")
+trusttunnel_existing_cert_chain_path: $(yaml_quote "$existing_cert_chain_path")
+trusttunnel_existing_private_key_path: $(yaml_quote "$existing_private_key_path")
 trusttunnel_open_firewall: ${open_firewall}
 trusttunnel_firewall_backend: $(yaml_quote "$firewall_backend")
 trusttunnel_existing_credentials_file: $(yaml_quote "$existing_credentials_file")

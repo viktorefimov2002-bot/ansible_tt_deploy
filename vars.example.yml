@@ -3,6 +3,9 @@ trusttunnel_domain: vpn.example.com
 trusttunnel_public_address: vpn.example.com:443
 trusttunnel_cert_mode: letsencrypt
 trusttunnel_acme_email: admin@example.com
+# Required only when trusttunnel_cert_mode: existing
+# trusttunnel_existing_cert_chain_path: /etc/letsencrypt/live/vpn.example.com/fullchain.pem
+# trusttunnel_existing_private_key_path: /etc/letsencrypt/live/vpn.example.com/privkey.pem
 
 trusttunnel_open_firewall: true
 trusttunnel_firewall_backend: auto

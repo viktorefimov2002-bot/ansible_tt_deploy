@@ -141,6 +141,8 @@ Let's Encrypt-сертификат и firewall-правила по умолча�
 - `trusttunnel_listen_address` - адрес прослушивания, по умолчанию `0.0.0.0:443`.
 - `trusttunnel_cert_mode` - `letsencrypt`, `selfsigned` или `existing`.
 - `trusttunnel_existing_cert_chain_path` и `trusttunnel_existing_private_key_path` - пути к сертификату и ключу при `existing`.
+  Если при удалении не удалять Let's Encrypt-сертификат, то повторная установка с тем же `trusttunnel_domain` и `trusttunnel_cert_mode: letsencrypt` переиспользует сертификат из `/etc/letsencrypt/live/<domain>/`.
+  Режим `existing` нужен, когда вы хотите явно указать уже лежащие на удалённой машине `fullchain.pem` и `privkey.pem`, например `/etc/letsencrypt/live/vpn.example.com/fullchain.pem`.
 - `trusttunnel_existing_credentials_file` - имя файла из `roles/trusttunnel_endpoint/files/`, который нужно использовать как готовый `credentials.toml` для миграции клиентов.
 - `trusttunnel_open_firewall` - открыть 80/tcp, 443/tcp и 443/udp до выпуска сертификата, по умолчанию выключено.
 - `trusttunnel_firewall_backend` - `auto`, `ufw`, `firewalld` или `none`. При `auto` роль сначала ищет `ufw` как типичный backend Ubuntu, потом `firewalld`, иначе использует `none`.
