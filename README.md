@@ -79,6 +79,76 @@ trusttunnel_clients: []
 
 Он спрашивает базовые параметры, создает `inventory.ini` и `vars.yml`, выставляет `600` на оба файла, затем запускает `ansible-playbook`. Основная логика установки остается в Ansible-роли.
 
+### Что подготовить перед запуском bootstrap
+
+Перед запуском желательно заранее понимать или подготовить:
+
+- IP или DNS-имя удаленного сервера, на который будет установлен TrustTunnel Endpoint.
+- SSH-пользователя на удаленном сервере. Обычно это `root`; если используется другой пользователь, у него должен быть sudo-доступ.
+- Способ SSH-доступа: пароль или ключ. При доступе по паролю на управляющей машине нужен `sshpass`; bootstrap может временно установить его через `apt-get`.
+- Домен для TrustTunnel, например `vpn.example.com`. В режиме Let's Encrypt этот домен должен указывать на сервер, потому что на него выпускается TLS-сертификат.
+- Публичный адрес для клиентов, например `vpn.example.com:443`. Именно это значение попадет в клиентские конфиги.
+- Режим сертификата: `letsencrypt`, `selfsigned` или `existing`.
+- Если используется Let's Encrypt: email для уведомлений Certbot.
+- Если переносите клиентов со старого сервера: файл `credentials.toml`, заранее положенный в `roles/trusttunnel_endpoint/files/`.
+- Имя и пароль VPN-клиента, если не используете готовый `credentials.toml`.
+- Решение, нужно ли открывать локальный firewall средствами Ansible. По умолчанию `false`; это нормально, если firewall управляется у облачного провайдера или порты уже открыты.
+- Пароль Ansible Vault, если хотите хранить секреты в зашифрованном `vault.yml`.
+
+### Пример интерактивного запуска bootstrap
+
+Ниже пример первичной установки на Ubuntu/Debian control-machine, где Ansible уже установлен, SSH-доступ к серверу идет по паролю, сертификат выпускается через Let's Encrypt, а создается один новый VPN-клиент:
+
+```text
+$ ./bootstrap.sh
+Is ansible/ansible-playbook already installed on this machine? yes/no [yes]: yes
+Remote server IP or DNS name for SSH/Ansible: 144.31.109.13
+Remote SSH user for Ansible [root]: root
+SSH authentication method for Ansible: password, key [password]: password
+Remote SSH password for Ansible:
+TrustTunnel domain for TLS certificate/SNI, for example vpn.example.com [144.31.109.13]: vpn.example.com
+Public address written to client configs; clients connect to it. Use domain/IP, optionally with port, for example vpn.example.com or vpn.example.com:443 [vpn.example.com:443]: vpn.example.com:443
+Certificate mode: letsencrypt, selfsigned, existing [letsencrypt]: letsencrypt
+Let's Encrypt email: admin@example.com
+Use an existing TrustTunnel credentials.toml to preserve VPN clients? yes/no [no]: no
+VPN client username to create in credentials.toml [user1]: user1
+VPN client password to create in credentials.toml:
+Open local firewall ports with Ansible? true/false [false]: false
+Encrypt generated secrets with Ansible Vault? yes/no [yes]: yes
+Ansible Vault password for vault.yml:
+```
+
+После этого bootstrap:
+
+- создаст `inventory.ini` с адресом сервера и SSH-пользователем;
+- создаст `vars.yml` с несекретными параметрами TrustTunnel;
+- при выборе Vault создаст зашифрованный `vault.yml` с SSH/VPN/sudo-паролями;
+- запустит `ansible-playbook -i inventory.ini site.yml ...`;
+- создаст `deploy.sh` и `uninstall.sh` для повторного запуска;
+- после успешной раскатки создаст `deployment_info_<host>.md` с памяткой по клиентским конфигам и удалению.
+
+Если Ansible не установлен, ответьте `no` на первый вопрос. Bootstrap спросит, можно ли временно установить Ansible для раскатки и удалить после завершения:
+
+```text
+Is ansible/ansible-playbook already installed on this machine? yes/no [yes]: no
+Can bootstrap install Ansible temporarily for this deployment and remove it afterwards? yes/no [yes]: yes
+```
+
+Если нужен перенос существующих VPN-клиентов, сначала положите файл:
+
+```bash
+cp credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
+```
+
+А в bootstrap ответьте:
+
+```text
+Use an existing TrustTunnel credentials.toml to preserve VPN clients? yes/no [no]: yes
+Credentials file name inside role files directory [credentials.toml]: credentials.toml
+```
+
+В этом режиме bootstrap не спрашивает имя и пароль нового VPN-клиента: клиенты берутся из существующего `credentials.toml`.
+
 Bootstrap поддерживает SSH по паролю и по ключу. Для SSH по паролю Ansible использует `sshpass`; если его нет, helper предложит временно установить `sshpass` через `apt-get` и удалить после завершения. Вывод `apt-get` для `sshpass` пишется в `/tmp/trusttunnel-sshpass-install.log` или `/tmp/trusttunnel-sshpass-remove.log`, а в терминале показывается только краткий статус или ошибка. Аналогично helper может временно установить Ansible, если его нет на управляющей машине.
 
 Если в ответах есть секреты, например SSH-пароль, sudo-пароль или пароль нового VPN-клиента, bootstrap предложит зашифровать их через Ansible Vault. При согласии:
