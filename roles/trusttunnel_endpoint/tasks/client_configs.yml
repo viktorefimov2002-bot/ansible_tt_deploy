@@ -1,0 +1,110 @@
+---
+- name: Generate client configurations
+  ansible.builtin.command:
+    chdir: "{{ trusttunnel_install_dir }}"
+    cmd: >-
+      {{ (trusttunnel_install_dir ~ '/trusttunnel_endpoint') | quote }} vpn.toml hosts.toml
+      -c {{ item | quote }}
+      -a {{ trusttunnel_effective_public_address | quote }}
+      --format {{ trusttunnel_client_config_format | quote }}
+      --name {{ trusttunnel_client_config_name | quote }}
+      {% for dns_upstream in trusttunnel_dns_upstreams %}
+      --dns-upstream {{ dns_upstream | quote }}
+      {% endfor %}
+      {% if trusttunnel_generate_client_random_prefix %}
+      --generate-client-random-prefix
+      {% endif %}
+  loop: "{{ trusttunnel_effective_client_usernames }}"
+  register: trusttunnel_client_config_results
+  changed_when: trusttunnel_generate_client_random_prefix | bool
+  when: trusttunnel_generate_client_config | bool
+  no_log: true
+
+- name: Save client configurations on server
+  ansible.builtin.copy:
+    dest: "{{ trusttunnel_install_dir }}/client_{{ item.item }}.{{ trusttunnel_client_config_format }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ item.stdout }}\n"
+  loop: "{{ trusttunnel_client_config_results.results | default([]) }}"
+  when: trusttunnel_generate_client_config | bool
+  no_log: true
+
+- name: Ensure local client config directory exists
+  ansible.builtin.file:
+    path: "{{ trusttunnel_client_config_local_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when:
+    - trusttunnel_generate_client_config | bool
+    - trusttunnel_fetch_client_configs | bool
+
+- name: Fetch client configurations to controller
+  ansible.builtin.fetch:
+    src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
+    dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
+    flat: true
+  loop: "{{ trusttunnel_effective_client_usernames }}"
+  when:
+    - trusttunnel_generate_client_config | bool
+    - trusttunnel_fetch_client_configs | bool
+  no_log: true
+
+- name: Find stale client configurations on server
+  ansible.builtin.find:
+    paths: "{{ trusttunnel_install_dir }}"
+    patterns: "client_*.{{ trusttunnel_client_config_format }}"
+    file_type: file
+  register: trusttunnel_server_client_configs
+  when: trusttunnel_prune_client_configs | bool
+
+- name: Remove stale client configurations from server
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ trusttunnel_server_client_configs.files | default([]) }}"
+  vars:
+    trusttunnel_config_username: >-
+      {{ item.path | basename | regex_replace('^client_(.*)\\.' ~ trusttunnel_client_config_format ~ '$', '\\1') }}
+  when:
+    - trusttunnel_prune_client_configs | bool
+    - trusttunnel_config_username not in trusttunnel_effective_client_usernames
+  no_log: true
+
+- name: Find stale fetched client configurations on controller
+  ansible.builtin.find:
+    paths: "{{ trusttunnel_client_config_local_dir }}"
+    patterns: "{{ inventory_hostname }}_client_*.{{ trusttunnel_client_config_format }}"
+    file_type: file
+  register: trusttunnel_local_client_configs
+  delegate_to: localhost
+  become: false
+  when:
+    - trusttunnel_prune_client_configs | bool
+    - trusttunnel_fetch_client_configs | bool
+
+- name: Remove stale fetched client configurations from controller
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ trusttunnel_local_client_configs.files | default([]) }}"
+  vars:
+    trusttunnel_config_username: >-
+      {{ item.path | basename | regex_replace('^.*_client_(.*)\\.' ~ trusttunnel_client_config_format ~ '$', '\\1') }}
+  delegate_to: localhost
+  become: false
+  when:
+    - trusttunnel_prune_client_configs | bool
+    - trusttunnel_fetch_client_configs | bool
+    - trusttunnel_config_username not in trusttunnel_effective_client_usernames
+  no_log: true
+
+- name: Show generated client configuration paths
+  ansible.builtin.debug:
+    msg:
+      - "Client configs saved on server under {{ trusttunnel_install_dir }}/client_<username>.{{ trusttunnel_client_config_format }}"
+      - "Fetched configs saved locally under {{ trusttunnel_client_config_local_dir }}"
+  when: trusttunnel_generate_client_config | bool

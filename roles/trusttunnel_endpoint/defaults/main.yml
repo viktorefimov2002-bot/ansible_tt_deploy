@@ -29,6 +29,7 @@ trusttunnel_generate_client_random_prefix: false
 trusttunnel_client_config_name: "TrustTunnel"
 trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
 trusttunnel_fetch_client_configs: true
+trusttunnel_prune_client_configs: false
 trusttunnel_remove_local_client_configs: true
 trusttunnel_dns_upstreams: []
 

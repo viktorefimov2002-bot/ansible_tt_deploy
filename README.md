@@ -84,10 +84,10 @@ trusttunnel_clients: []
 Перед запуском желательно заранее понимать или подготовить:
 
 - IP или DNS-имя удаленного сервера, на который будет установлен TrustTunnel Endpoint.
-- SSH-пользователя на удаленном сервере. Обычно это `root`; если используется другой пользователь, у него должен быть sudo-доступ.
+- Root SSH-доступ к удаленному серверу. Bootstrap всегда настраивает Ansible-подключение как `root`.
 - Способ SSH-доступа: пароль или ключ. При доступе по паролю на управляющей машине нужен `sshpass`; bootstrap может временно установить его через `apt-get`.
 - Домен для TrustTunnel, например `vpn.example.com`. В режиме Let's Encrypt этот домен должен указывать на сервер, потому что на него выпускается TLS-сертификат.
-- Публичный адрес для клиентов, например `vpn.example.com:443`. Именно это значение попадет в клиентские конфиги.
+- Публичный адрес для клиентов будет выбран автоматически как `<домен>:443`, например `vpn.example.com:443`. Именно это значение попадет в клиентские конфиги.
 - Режим сертификата: `letsencrypt`, `selfsigned` или `existing`.
 - Если используется Let's Encrypt: email для уведомлений Certbot.
 - Если переносите клиентов со старого сервера: файл `credentials.toml`, заранее положенный в `roles/trusttunnel_endpoint/files/`.
@@ -103,11 +103,13 @@ trusttunnel_clients: []
 $ ./bootstrap.sh
 Is ansible/ansible-playbook already installed on this machine? yes/no [yes]: yes
 Remote server IP or DNS name for SSH/Ansible: 144.31.109.13
-Remote SSH user for Ansible [root]: root
+Adding 144.31.109.13 to known_hosts...
 SSH authentication method for Ansible: password, key [password]: password
-Remote SSH password for Ansible:
-TrustTunnel domain for TLS certificate/SNI, for example vpn.example.com [144.31.109.13]: vpn.example.com
-Public address written to client configs; clients connect to it. Use domain/IP, optionally with port, for example vpn.example.com or vpn.example.com:443 [vpn.example.com:443]: vpn.example.com:443
+Remote root SSH password for Ansible:
+Testing SSH password for root@144.31.109.13...
+SSH password accepted.
+TrustTunnel domain for TLS certificate/SNI, for example vpn.example.com: vpn.example.com
+Public address for client configs will be: vpn.example.com:443
 Certificate mode: letsencrypt, selfsigned, existing [letsencrypt]: letsencrypt
 Let's Encrypt email: admin@example.com
 Use an existing TrustTunnel credentials.toml to preserve VPN clients? yes/no [no]: no
@@ -120,7 +122,9 @@ Ansible Vault password for vault.yml:
 
 После этого bootstrap:
 
-- создаст `inventory.ini` с адресом сервера и SSH-пользователем;
+- добавит сервер в `~/.ssh/known_hosts`, если его там еще нет;
+- проверит root SSH-доступ до запуска playbook;
+- создаст `inventory.ini` с адресом сервера и `ansible_user=root`;
 - создаст `vars.yml` с несекретными параметрами TrustTunnel;
 - при выборе Vault создаст зашифрованный `vault.yml` с SSH/VPN/sudo-паролями;
 - запустит `ansible-playbook -i inventory.ini site.yml ...`;
@@ -133,6 +137,8 @@ Ansible Vault password for vault.yml:
 Is ansible/ansible-playbook already installed on this machine? yes/no [yes]: no
 Can bootstrap install Ansible temporarily for this deployment and remove it afterwards? yes/no [yes]: yes
 ```
+
+Если Ansible уже был установлен до запуска bootstrap, скрипт использует его и не удаляет после завершения. Автоматическое удаление выполняется только для Ansible, который установил сам bootstrap в текущем запуске.
 
 Если нужен перенос существующих VPN-клиентов, сначала положите файл:
 
@@ -148,6 +154,72 @@ Credentials file name inside role files directory [credentials.toml]: credential
 ```
 
 В этом режиме bootstrap не спрашивает имя и пароль нового VPN-клиента: клиенты берутся из существующего `credentials.toml`.
+
+### Добавление новых VPN-клиентов
+
+Для добавления пользователей после первичной установки используйте локальный helper `add_vpn_clients.sh`. Он читает файл `roles/trusttunnel_endpoint/files/new_clients.toml`, добавляет отсутствующих пользователей в `roles/trusttunnel_endpoint/files/credentials.toml`, а затем нужно запустить обычный deploy.
+
+Формат `new_clients.toml` - обычный TOML с повторяющимися блоками `[[client]]`. В каждом блоке обязательны два поля:
+
+- `username` - имя VPN-клиента. Допустимы латинские буквы, цифры, `_`, `.`, `@` и `-`.
+- `password` - пароль этого VPN-клиента.
+
+Пример файла `roles/trusttunnel_endpoint/files/new_clients.toml`:
+
+```toml
+[[client]]
+username = "alice"
+password = "alice-password"
+
+[[client]]
+username = "bob"
+password = "bob-password"
+```
+
+Запуск:
+
+```bash
+./add_vpn_clients.sh
+```
+
+После добавления пользователей helper спросит, запускать ли `deploy.sh` сразу. Если ответить `yes`, он запустит deploy с `trusttunnel_existing_credentials_file=credentials.toml`, синхронизирует `/opt/trusttunnel/credentials.toml` на сервере, заново сгенерирует клиентские конфиги и заберет их локально в `client_configs`.
+
+Если `roles/trusttunnel_endpoint/files/credentials.toml` еще не существует, helper остановится и предупредит об этом. Это защита от случайной потери старых пользователей: перед добавлением клиентов скопируйте текущий серверный файл:
+
+```bash
+scp root@<server>:/opt/trusttunnel/credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
+```
+
+Если вы намеренно создаете новый `credentials.toml` с нуля, это можно подтвердить интерактивно или задать переменную окружения:
+
+```bash
+TRUSTTUNNEL_INIT_CREDENTIALS=yes ./add_vpn_clients.sh
+```
+
+Если исходный `credentials.toml` называется иначе или лежит в другом месте, можно явно передать оба пути:
+
+```bash
+./add_vpn_clients.sh roles/trusttunnel_endpoint/files/new_clients.toml roles/trusttunnel_endpoint/files/credentials.toml
+```
+
+Автоматический deploy поддерживается для `credentials.toml`, лежащего в `roles/trusttunnel_endpoint/files/`, потому что Ansible role берет existing credentials только из этой директории. Повторный запуск безопасен: пользователи с уже существующим `username` будут пропущены. Файлы `credentials.toml` и `new_clients.toml` добавлены в `.gitignore`, потому что содержат пароли клиентов.
+
+### Удаление VPN-клиентов
+
+Для удаления пользователей из `credentials.toml` используйте `remove_vpn_clients.sh`. Подготовьте файл `roles/trusttunnel_endpoint/files/remove_clients.txt`:
+
+```text
+alice
+bob
+```
+
+Пустые строки и комментарии через `#` игнорируются. Запуск:
+
+```bash
+./remove_vpn_clients.sh
+```
+
+После изменения файла helper спросит, запускать ли `deploy.sh` сразу. Если ответить `yes`, он синхронизирует обновленный `credentials.toml` на сервер, заново сгенерирует конфиги оставшихся клиентов и включит `trusttunnel_prune_client_configs=true`, чтобы удалить stale `client_<username>.*` для исключенных пользователей на сервере и в локальном `client_configs`.
 
 Bootstrap поддерживает SSH по паролю и по ключу. Для SSH по паролю Ansible использует `sshpass`; если его нет, helper предложит временно установить `sshpass` через `apt-get` и удалить после завершения. Вывод `apt-get` для `sshpass` пишется в `/tmp/trusttunnel-sshpass-install.log` или `/tmp/trusttunnel-sshpass-remove.log`, а в терминале показывается только краткий статус или ошибка. Аналогично helper может временно установить Ansible, если его нет на управляющей машине.
 
@@ -218,6 +290,7 @@ Let's Encrypt-сертификат и firewall-правила по умолча�
 - `trusttunnel_firewall_backend` - `auto`, `ufw`, `firewalld` или `none`. При `auto` роль сначала ищет `ufw` как типичный backend Ubuntu, потом `firewalld`, иначе использует `none`.
 - `trusttunnel_fetch_client_configs` - забрать клиентские конфиги на управляющую машину, по умолчанию включено.
 - `trusttunnel_client_config_local_dir` - локальная директория для скачанных клиентских конфигов, по умолчанию `client_configs` рядом с playbook.
+- `trusttunnel_prune_client_configs` - удалить stale клиентские конфиги, которых больше нет в текущем `credentials.toml` или `trusttunnel_clients`, по умолчанию выключено.
 - `trusttunnel_generate_client_random_prefix` - сгенерировать TLS random prefix и добавить allow-rule в `rules.toml`.
 - `trusttunnel_client_config_format` - `toml` или `deeplink`.
 - `trusttunnel_remove_install_dir` - удалить директорию установки при uninstall, по умолчанию включено.

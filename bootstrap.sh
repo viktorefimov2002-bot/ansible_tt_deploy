@@ -77,6 +77,19 @@ prompt_yes_no() {
   done
 }
 
+prompt_required() {
+  label="$1"
+
+  while :; do
+    value=$(prompt "$label")
+    if [ -n "$value" ]; then
+      printf "%s" "$value"
+      return 0
+    fi
+    printf "This value is required.\n" >&2
+  done
+}
+
 run_as_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -124,6 +137,37 @@ remove_ansible() {
   run_as_root apt-get autoremove -y || true
 }
 
+ensure_known_host() {
+  host="$1"
+  ssh_dir="${HOME}/.ssh"
+  known_hosts_file="${ssh_dir}/known_hosts"
+
+  if ! command -v ssh >/dev/null 2>&1; then
+    echo "ssh was not found in PATH. Install OpenSSH client first." >&2
+    return 1
+  fi
+
+  mkdir -p "$ssh_dir"
+  chmod 700 "$ssh_dir"
+  touch "$known_hosts_file"
+  chmod 600 "$known_hosts_file"
+
+  if command -v ssh-keygen >/dev/null 2>&1 && ssh-keygen -F "$host" -f "$known_hosts_file" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v ssh-keyscan >/dev/null 2>&1; then
+    echo "Adding $host to known_hosts..." >&2
+    if ssh-keyscan -T 10 -H "$host" >> "$known_hosts_file" 2>/tmp/trusttunnel-ssh-keyscan.log; then
+      return 0
+    fi
+    echo "Warning: ssh-keyscan failed for $host. SSH will still try StrictHostKeyChecking=accept-new." >&2
+    echo "See /tmp/trusttunnel-ssh-keyscan.log for details." >&2
+  else
+    echo "Warning: ssh-keyscan was not found. SSH will still try StrictHostKeyChecking=accept-new." >&2
+  fi
+}
+
 install_sshpass() {
   if ! command -v apt-get >/dev/null 2>&1; then
     echo "Automatic sshpass installation is supported only on apt-based systems such as Ubuntu/Debian." >&2
@@ -158,6 +202,30 @@ remove_sshpass() {
     return 1
   fi
   run_as_root apt-get autoremove -y >>/tmp/trusttunnel-sshpass-remove.log 2>&1 || true
+}
+
+test_root_ssh_with_password() {
+  host="$1"
+  password="$2"
+
+  SSHPASS="$password" sshpass -e ssh \
+    -o BatchMode=no \
+    -o NumberOfPasswordPrompts=1 \
+    -o PreferredAuthentications=password \
+    -o PubkeyAuthentication=no \
+    -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout=10 \
+    "root@${host}" true
+}
+
+test_root_ssh_with_key() {
+  host="$1"
+
+  ssh \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=accept-new \
+    -o ConnectTimeout=10 \
+    "root@${host}" true
 }
 
 yaml_quote() {
@@ -218,8 +286,8 @@ else
       exit 1
     fi
 
-    install_ansible
     ansible_installed_by_bootstrap=true
+    install_ansible
 
     if ! command -v ansible-playbook >/dev/null 2>&1; then
       echo "Ansible installation finished, but ansible-playbook is still not available in PATH." >&2
@@ -228,13 +296,13 @@ else
   fi
 fi
 
-server_host=$(prompt "Remote server IP or DNS name for SSH/Ansible")
-ssh_user=$(prompt "Remote SSH user for Ansible" "root")
+server_host=$(prompt_required "Remote server IP or DNS name for SSH/Ansible")
+ssh_user="root"
+ensure_known_host "$server_host"
 ssh_auth_method=$(prompt_choice "SSH authentication method for Ansible: password, key" "password" "password key")
 ssh_password=""
 become_password=""
 if [ "$ssh_auth_method" = "password" ]; then
-  ssh_password=$(prompt_secret "Remote SSH password for Ansible")
   if ! command -v sshpass >/dev/null 2>&1; then
     sshpass_allowed=$(prompt_yes_no "Ansible password SSH requires sshpass. Can bootstrap install it temporarily and remove it afterwards? yes/no" "yes")
     if [ "$sshpass_allowed" = "no" ]; then
@@ -244,20 +312,34 @@ if [ "$ssh_auth_method" = "password" ]; then
     install_sshpass
     sshpass_installed_by_bootstrap=true
   fi
-fi
 
-if [ "$ssh_user" != "root" ]; then
-  become_password_required=$(prompt_yes_no "Does sudo/become on the remote server require a password? yes/no" "no")
-  if [ "$become_password_required" = "yes" ]; then
-    become_password=$(prompt_secret "Remote sudo/become password")
-    if [ -z "$become_password" ] && [ -n "$ssh_password" ]; then
-      become_password="$ssh_password"
+  while :; do
+    ssh_password=$(prompt_secret "Remote root SSH password for Ansible")
+    echo "Testing SSH password for root@$server_host..." >&2
+    if test_root_ssh_with_password "$server_host" "$ssh_password" >/dev/null 2>&1; then
+      echo "SSH password accepted." >&2
+      break
     fi
+    echo "Could not connect to root@$server_host with this password." >&2
+    retry_ssh_password=$(prompt_yes_no "Try entering the SSH password again? yes/no" "yes")
+    if [ "$retry_ssh_password" = "no" ]; then
+      echo "Cannot continue without working root SSH access." >&2
+      exit 1
+    fi
+  done
+else
+  echo "Testing SSH key access for root@$server_host..." >&2
+  if ! test_root_ssh_with_key "$server_host" >/dev/null 2>&1; then
+    echo "Cannot connect to root@$server_host using SSH key authentication." >&2
+    echo "Configure root SSH key access or rerun bootstrap and choose password authentication." >&2
+    exit 1
   fi
+  echo "SSH key access works." >&2
 fi
 
-domain=$(prompt "TrustTunnel domain for TLS certificate/SNI, for example vpn.example.com" "$server_host")
-public_address=$(prompt "Public address written to client configs; clients connect to it. Use domain/IP, optionally with port, for example vpn.example.com or vpn.example.com:443" "${domain}:443")
+domain=$(prompt_required "TrustTunnel domain for TLS certificate/SNI, for example vpn.example.com")
+public_address="${domain}:443"
+echo "Public address for client configs will be: $public_address" >&2
 cert_mode=$(prompt_choice "Certificate mode: letsencrypt, selfsigned, existing" "letsencrypt" "letsencrypt selfsigned existing")
 acme_email=""
 if [ "$cert_mode" = "letsencrypt" ]; then
@@ -392,131 +474,38 @@ fi
 chmod 600 "$VARS_FILE"
 chmod 600 "$INVENTORY_FILE"
 
-cat > "$DEPLOY_HELPER_FILE" <<'EOF'
+write_playbook_helper() {
+  helper_file="$1"
+  playbook_name="$2"
+
+  cat > "$helper_file" <<EOF
 #!/bin/bash
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-EXTRA_VARS=(-e "@${SCRIPT_DIR}/vars.yml")
-NEEDS_SSHPASS="${TRUSTTUNNEL_NEEDS_SSHPASS:-auto}"
+SCRIPT_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+EXTRA_VARS=(-e "@\${SCRIPT_DIR}/vars.yml")
+NEEDS_SSHPASS="\${TRUSTTUNNEL_NEEDS_SSHPASS:-auto}"
 SSHPASS_INSTALLED_BY_HELPER=false
 
-run_as_root() {
-  if [ "$(id -u)" -eq 0 ]; then
-    "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
-  else
-    echo "This action requires root privileges, but sudo is not installed." >&2
-    return 1
-  fi
-}
-
-ensure_root_access() {
-  if [ "$(id -u)" -eq 0 ]; then
-    return 0
-  fi
-  if command -v sudo >/dev/null 2>&1; then
-    sudo -v
-    return 0
-  fi
-  echo "This action requires root privileges, but sudo is not installed." >&2
-  return 1
-}
-
-install_sshpass() {
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "Automatic sshpass installation is supported only on apt-based systems such as Ubuntu/Debian." >&2
-    return 1
-  fi
-
-  echo "Installing sshpass for Ansible password authentication..." >&2
-  ensure_root_access
-  if ! run_as_root apt-get update >/tmp/trusttunnel-sshpass-install.log 2>&1; then
-    echo "Failed to update apt package lists while installing sshpass." >&2
-    echo "See /tmp/trusttunnel-sshpass-install.log for details." >&2
-    return 1
-  fi
-  if ! run_as_root apt-get install -y sshpass >>/tmp/trusttunnel-sshpass-install.log 2>&1; then
-    echo "Failed to install sshpass." >&2
-    echo "See /tmp/trusttunnel-sshpass-install.log for details." >&2
-    return 1
-  fi
-  SSHPASS_INSTALLED_BY_HELPER=true
-  echo "sshpass was installed successfully." >&2
-}
-
-remove_sshpass() {
-  if [ "$SSHPASS_INSTALLED_BY_HELPER" != "true" ]; then
-    return 0
-  fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    return 0
-  fi
-
-  echo "Removing sshpass installed by this helper..." >&2
-  ensure_root_access
-  if ! run_as_root apt-get remove -y sshpass >/tmp/trusttunnel-sshpass-remove.log 2>&1; then
-    echo "Warning: failed to remove sshpass automatically. Please remove it manually if needed." >&2
-    echo "See /tmp/trusttunnel-sshpass-remove.log for details." >&2
-    return 1
-  fi
-  run_as_root apt-get autoremove -y >>/tmp/trusttunnel-sshpass-remove.log 2>&1 || true
-}
+. "\${SCRIPT_DIR}/helpers/ansible_playbook_helper.sh"
 
 cleanup() {
-  remove_sshpass || true
-}
-
-detect_sshpass_need() {
-  if [ "$NEEDS_SSHPASS" = "true" ] || [ "$NEEDS_SSHPASS" = "false" ]; then
-    return 0
-  fi
-
-  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq '^ansible_password:' "${SCRIPT_DIR}/vars.yml"; then
-    NEEDS_SSHPASS=true
-    return 0
-  fi
-
-  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq "^trusttunnel_ssh_auth_method: '?password'?" "${SCRIPT_DIR}/vars.yml"; then
-    NEEDS_SSHPASS=true
-    return 0
-  fi
-
-  if [ -f "${SCRIPT_DIR}/vars.yml" ] && grep -Eq "^trusttunnel_ssh_auth_method: '?key'?" "${SCRIPT_DIR}/vars.yml"; then
-    NEEDS_SSHPASS=false
-    return 0
-  fi
-
-  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
-    NEEDS_SSHPASS=true
-  else
-    NEEDS_SSHPASS=false
-  fi
-}
-
-ensure_sshpass() {
-  detect_sshpass_need
-  if [ "$NEEDS_SSHPASS" != "true" ]; then
-    return 0
-  fi
-  if command -v sshpass >/dev/null 2>&1; then
-    return 0
-  fi
-  install_sshpass
+  remove_sshpass_installed_by_helper || true
 }
 
 trap cleanup EXIT
 
-if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
-  EXTRA_VARS+=(-e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass)
+if [ -f "\${SCRIPT_DIR}/vault.yml" ]; then
+  EXTRA_VARS+=(-e "@\${SCRIPT_DIR}/vault.yml" --ask-vault-pass)
 fi
 
-ensure_sshpass
-ansible-playbook -i "${SCRIPT_DIR}/inventory.ini" "${SCRIPT_DIR}/site.yml" "${EXTRA_VARS[@]}" "$@"
+ensure_sshpass_for_ansible
+ansible-playbook -i "\${SCRIPT_DIR}/inventory.ini" "\${SCRIPT_DIR}/${playbook_name}" "\${EXTRA_VARS[@]}" "\$@"
 EOF
+}
 
-sed 's#\"${SCRIPT_DIR}/site.yml\"#\"${SCRIPT_DIR}/uninstall.yml\"#' "$DEPLOY_HELPER_FILE" > "$UNINSTALL_HELPER_FILE"
+write_playbook_helper "$DEPLOY_HELPER_FILE" "site.yml"
+write_playbook_helper "$UNINSTALL_HELPER_FILE" "uninstall.yml"
 
 chmod 700 "$DEPLOY_HELPER_FILE" "$UNINSTALL_HELPER_FILE"
 

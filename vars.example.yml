@@ -25,6 +25,7 @@ trusttunnel_clients:
 # trusttunnel_existing_credentials_file: credentials.toml
 # trusttunnel_install_version: "1.0.33"
 # trusttunnel_client_config_format: deeplink
+# trusttunnel_prune_client_configs: false
 # trusttunnel_generate_client_random_prefix: true
 # trusttunnel_dns_upstreams:
 #   - 1.1.1.1:53

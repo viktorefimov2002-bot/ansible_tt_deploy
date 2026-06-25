@@ -1,0 +1,81 @@
+---
+- name: Validate firewall backend
+  ansible.builtin.assert:
+    that:
+      - trusttunnel_firewall_backend in ['auto', 'ufw', 'firewalld', 'none']
+    fail_msg: "trusttunnel_firewall_backend must be one of: auto, ufw, firewalld, none"
+  when: trusttunnel_open_firewall | bool or trusttunnel_close_firewall | bool
+
+- name: Check ufw availability for firewall auto-detection
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: trusttunnel_ufw_binary
+  when: trusttunnel_firewall_backend == 'auto'
+
+- name: Check firewalld availability for firewall auto-detection
+  ansible.builtin.stat:
+    path: /usr/bin/firewall-cmd
+  register: trusttunnel_firewalld_binary
+  when: trusttunnel_firewall_backend == 'auto'
+
+- name: Set effective firewall backend
+  ansible.builtin.set_fact:
+    trusttunnel_effective_firewall_backend: >-
+      {{ (trusttunnel_firewall_backend != 'auto')
+         | ternary(
+             trusttunnel_firewall_backend,
+             (trusttunnel_ufw_binary.stat.exists | default(false))
+             | ternary('ufw',
+               (trusttunnel_firewalld_binary.stat.exists | default(false))
+               | ternary('firewalld', 'none'))
+           ) }}
+
+- name: Show detected firewall backend
+  ansible.builtin.debug:
+    msg: "TrustTunnel firewall backend: {{ trusttunnel_effective_firewall_backend }}"
+  when: trusttunnel_open_firewall | bool or trusttunnel_close_firewall | bool
+
+- name: Open firewall ports with firewalld
+  when:
+    - trusttunnel_state == 'present'
+    - trusttunnel_open_firewall | bool
+    - trusttunnel_effective_firewall_backend == 'firewalld'
+  block:
+    - name: Check firewalld availability
+      ansible.builtin.command:
+        cmd: firewall-cmd --state
+      register: trusttunnel_firewalld_state
+      changed_when: false
+      failed_when: trusttunnel_firewalld_state.rc != 0
+
+    - name: Open HTTP and HTTPS ports in firewalld
+      ansible.builtin.command:
+        cmd: "firewall-cmd --permanent --add-port={{ item }}"
+      register: trusttunnel_firewalld_ports
+      changed_when:
+        - "'success' in trusttunnel_firewalld_ports.stdout"
+        - "'ALREADY_ENABLED' not in trusttunnel_firewalld_ports.stderr"
+      loop:
+        - 80/tcp
+        - 443/tcp
+        - 443/udp
+
+    - name: Reload firewalld
+      ansible.builtin.command:
+        cmd: firewall-cmd --reload
+      changed_when: true
+      when: trusttunnel_firewalld_ports.changed
+
+- name: Open firewall ports with ufw
+  ansible.builtin.command:
+    cmd: "ufw allow {{ item }}"
+  register: trusttunnel_ufw_ports
+  changed_when: "'Rule added' in trusttunnel_ufw_ports.stdout or 'Rules updated' in trusttunnel_ufw_ports.stdout"
+  loop:
+    - 80/tcp
+    - 443/tcp
+    - 443/udp
+  when:
+    - trusttunnel_state == 'present'
+    - trusttunnel_open_firewall | bool
+    - trusttunnel_effective_firewall_backend == 'ufw'

@@ -6,3 +6,6 @@ uninstall.sh
 deployment_info_*.md
 *.retry
 client_configs/
+roles/trusttunnel_endpoint/files/credentials.toml
+roles/trusttunnel_endpoint/files/new_clients.toml
+roles/trusttunnel_endpoint/files/remove_clients.txt

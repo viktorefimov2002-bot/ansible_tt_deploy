@@ -1,0 +1,115 @@
+---
+- name: Check local vault file for follow-up commands
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/vault.yml"
+  register: trusttunnel_local_vault_file
+  delegate_to: localhost
+  become: false
+
+- name: Set follow-up command extra vars
+  ansible.builtin.set_fact:
+    trusttunnel_followup_extra_vars: >-
+      {{ (trusttunnel_local_vault_file.stat.exists | default(false))
+         | ternary('-e @vars.yml -e @vault.yml --ask-vault-pass', '-e @vars.yml') }}
+
+- name: Write TrustTunnel deployment summary on controller
+  ansible.builtin.copy:
+    dest: "{{ playbook_dir }}/deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
+    mode: "0600"
+    content: |
+      # TrustTunnel deployment summary
+
+      Host: {{ inventory_hostname }}
+      Generated at: {{ ansible_date_time.iso8601 }}
+
+      ## Client configs
+
+      Server path:
+
+      ```text
+      {{ trusttunnel_install_dir }}/client_<username>.{{ trusttunnel_client_config_format }}
+      ```
+
+      Local controller path:
+
+      ```text
+      {{ trusttunnel_client_config_local_dir }}
+      ```
+
+      Client users:
+
+      {% for username in trusttunnel_effective_client_usernames %}
+      - {{ username }}
+      {% endfor %}
+
+      ## Server files
+
+      ```text
+      Endpoint binary: {{ trusttunnel_install_dir }}/trusttunnel_endpoint
+      Main config:     {{ trusttunnel_install_dir }}/vpn.toml
+      TLS hosts:       {{ trusttunnel_install_dir }}/hosts.toml
+      Credentials:     {{ trusttunnel_install_dir }}/credentials.toml
+      Rules:           {{ trusttunnel_install_dir }}/rules.toml
+      Systemd unit:    /etc/systemd/system/{{ trusttunnel_service_name }}.service
+      ```
+
+      ## Check service
+
+      ```bash
+      sudo systemctl status {{ trusttunnel_service_name }}
+      sudo journalctl -u {{ trusttunnel_service_name }} -f
+      ```
+
+      ## Firewall
+
+      Requested by playbook: {{ trusttunnel_open_firewall | bool }}
+      Effective backend: {{ trusttunnel_effective_firewall_backend }}
+
+      Firewall changes are only needed when the server has an OS-level firewall
+      that blocks 80/tcp, 443/tcp or 443/udp. If the OS firewall is disabled or
+      already allows these ports, TrustTunnel can work even when
+      `trusttunnel_open_firewall=false`. Cloud provider security groups, NAT and
+      external firewalls are outside this playbook and must be opened separately.
+      Let's Encrypt standalone mode also needs inbound 80/tcp during certificate
+      issuance and renewal.
+
+      ## Uninstall
+
+      Preferred helper:
+
+      ```bash
+      ./uninstall.sh
+      ```
+
+      The helper automatically adds `vault.yml` when present and temporarily
+      installs `sshpass` when password-based SSH requires it.
+
+      Manual uninstall:
+
+      ```bash
+      ansible-playbook -i inventory.ini uninstall.yml {{ trusttunnel_followup_extra_vars }}
+      ```
+
+      Full test cleanup, including Let's Encrypt certificate and local firewall rules:
+
+      ```bash
+      ansible-playbook -i inventory.ini uninstall.yml {{ trusttunnel_followup_extra_vars }} \
+        -e trusttunnel_remove_letsencrypt_cert=true \
+        -e trusttunnel_close_firewall=true
+      ```
+
+      Alternative through site.yml:
+
+      ```bash
+      ansible-playbook -i inventory.ini site.yml {{ trusttunnel_followup_extra_vars }} \
+        -e trusttunnel_state=absent
+      ```
+  delegate_to: localhost
+  become: false
+
+- name: Show TrustTunnel deployment summary path
+  ansible.builtin.debug:
+    msg:
+      - "Deployment summary saved locally to {{ playbook_dir }}/deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
+      - "Uninstall helper: {{ playbook_dir }}/uninstall.sh"
+      - "Manual uninstall command: ansible-playbook -i inventory.ini uninstall.yml {{ trusttunnel_followup_extra_vars }}"
