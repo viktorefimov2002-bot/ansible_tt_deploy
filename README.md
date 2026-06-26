@@ -11,7 +11,7 @@ Ansible-проект для быстрой установки и обслужи�
 - переносить существующих VPN-пользователей через `credentials.toml`;
 - добавлять и удалять VPN-клиентов;
 - удалять установленный TrustTunnel с сервера;
-- запускаться через новый helper `ttctl` или старый интерактивный `bootstrap.sh`.
+- запускаться через helper `ttctl` или старый интерактивный `bootstrap.sh`.
 
 ## Самый короткий сценарий
 
@@ -45,12 +45,6 @@ nano deploy.yml
 ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
 ```
 
-Если новый `ttctl`-workflow не подходит, можно использовать старый интерактивный сценарий:
-
-```bash
-./bootstrap.sh
-```
-
 ## Что подготовить заранее
 
 1. Linux-сервер x86_64 или aarch64.
@@ -81,11 +75,7 @@ python3 -m pip install PyYAML
 sudo apt-get install -y sshpass
 ```
 
-## Новый workflow через `ttctl`
-
-`ttctl` — единая обертка над существующими playbook'ами и helper-скриптами.
-
-Команды:
+## Команды `ttctl`
 
 ```bash
 ./ttctl init --config deploy.yml
@@ -96,13 +86,15 @@ sudo apt-get install -y sshpass
 ./ttctl status
 ./ttctl add-client
 ./ttctl add-client --sync-from-server
-./ttctl add-client --no-deploy
+./ttctl add-client --no-apply
 ./ttctl remove-client
 ./ttctl import-credentials ./credentials.toml
 ./ttctl uninstall
 ```
 
-Важно: `ttctl` не заменяет Ansible-роль. Он только упрощает подготовку локальных файлов и запуск уже существующих playbook'ов.
+`ttctl deploy` — это полный install/update через `site.yml`.
+
+`ttctl add-client` — это легкая post-install операция. Она не запускает полный deploy.
 
 ## Настройка `deploy.yml`
 
@@ -269,38 +261,6 @@ trusttunnel:
 ./ttctl uninstall -e trusttunnel_remove_letsencrypt_cert=true
 ```
 
-Для полного тестового сноса вместе с firewall-правилами:
-
-```bash
-./ttctl uninstall \
-  -e trusttunnel_remove_letsencrypt_cert=true \
-  -e trusttunnel_close_firewall=true
-```
-
-## Firewall-поля
-
-```yaml
-trusttunnel:
-  open_firewall: false
-  firewall_backend: auto
-```
-
-Если `open_firewall: false`, Ansible не меняет локальный firewall. Это нормально, если firewall выключен, правила уже открыты или порты управляются у облачного провайдера.
-
-Если нужно открыть локальные правила через `ufw` или `firewalld`:
-
-```yaml
-trusttunnel:
-  open_firewall: true
-  firewall_backend: auto
-```
-
-Открываются:
-
-- `80/tcp`;
-- `443/tcp`;
-- `443/udp`.
-
 ## Первый деплой нового сервера
 
 ```bash
@@ -342,76 +302,6 @@ nano deploy.yml
 client_configs/
 ```
 
-## Подключение не под root, а под sudo-пользователем
-
-Например, сервер доступен как `ubuntu@203.0.113.10`:
-
-```yaml
-server:
-  host: 203.0.113.10
-  ssh_user: ubuntu
-  become: true
-```
-
-Если SSH по ключу и sudo без пароля:
-
-```bash
-./ttctl init --config deploy.yml
-```
-
-Если SSH по паролю, но sudo без пароля:
-
-```bash
-./ttctl init --config deploy.yml --ask-ssh-pass
-```
-
-Если SSH по паролю и sudo тоже требует пароль:
-
-```bash
-./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
-```
-
-## Миграция существующих VPN-клиентов
-
-Если нужно сохранить пользователей со старого сервера, забери `credentials.toml`:
-
-```bash
-scp root@OLD_SERVER:/opt/trusttunnel/credentials.toml ./credentials.toml
-```
-
-В `deploy.yml` укажи:
-
-```yaml
-trusttunnel:
-  domain: vpn.example.com
-  public_address: vpn.example.com:443
-  cert_mode: letsencrypt
-  acme_email: admin@example.com
-
-  existing_credentials_source: ./credentials.toml
-  existing_credentials_file: credentials.toml
-  clients: []
-```
-
-Затем:
-
-```bash
-./ttctl init --config deploy.yml
-./ttctl deploy
-```
-
-`ttctl init` скопирует файл в:
-
-```text
-roles/trusttunnel_endpoint/files/credentials.toml
-```
-
-А Ansible-роль положит его на сервер как:
-
-```text
-/opt/trusttunnel/credentials.toml
-```
-
 ## Добавление VPN-клиентов после установки
 
 Подготовь файл:
@@ -436,13 +326,19 @@ password = "alice-password"
 ./ttctl add-client
 ```
 
-Теперь `ttctl add-client` работает так:
+`ttctl add-client` больше не запускает полный `site.yml`. Это post-install операция:
 
 1. если локального `roles/trusttunnel_endpoint/files/credentials.toml` нет, он сам забирает текущий `/opt/trusttunnel/credentials.toml` с сервера через Ansible;
-2. добавляет новых клиентов из `new_clients.toml`;
+2. добавляет новых клиентов из `new_clients.toml` в локальный `credentials.toml`;
 3. пропускает клиентов с уже существующим `username`;
-4. предлагает сразу запустить deploy;
-5. deploy отправляет обновленный `credentials.toml` обратно на сервер и заново генерирует клиентские конфиги.
+4. проверяет, что `trusttunnel.service` активен на сервере;
+5. копирует обновленный `credentials.toml` обратно на сервер в `/opt/trusttunnel/credentials.toml`;
+6. выполняет `systemctl reload-or-restart trusttunnel`;
+7. проверяет, что сервис остался активен;
+8. генерирует клиентские конфиги для пользователей из `new_clients.toml`;
+9. скачивает клиентские конфиги локально в `client_configs/`.
+
+Если TrustTunnel на сервере не установлен или сервис не активен, команда остановится с понятным сообщением и не будет пытаться применять файл.
 
 Если хочешь принудительно обновить локальный `credentials.toml` с сервера перед добавлением:
 
@@ -450,11 +346,13 @@ password = "alice-password"
 ./ttctl add-client --sync-from-server
 ```
 
-Если хочешь только изменить локальный `credentials.toml`, но не деплоить сразу:
+Если хочешь только изменить локальный `credentials.toml`, но не применять на сервере сразу:
 
 ```bash
-./ttctl add-client --no-deploy
+./ttctl add-client --no-apply
 ```
+
+Старый флаг `--no-deploy` тоже принимается как alias для `--no-apply`.
 
 Если файл с новыми клиентами лежит в другом месте:
 
@@ -466,17 +364,17 @@ password = "alice-password"
 
 Для текущего проекта безопаснее оставить `add-client` именно как операцию дополнения.
 
-Полная замена списка клиентов опаснее: можно случайно удалить существующих пользователей, если локальный файл устарел. Для удаления уже есть отдельный осознанный flow через:
+Полная замена списка клиентов опаснее: можно случайно удалить существующих пользователей, если локальный файл устарел или неполный. Для удаления уже есть отдельный осознанный flow через:
 
 ```bash
 ./ttctl remove-client
 ```
 
-Поэтому рекомендуемый подход такой:
+Рекомендуемый подход:
 
 - `add-client` — только добавляет новых, дубли пропускает;
 - `remove-client` — явно удаляет указанных;
-- полную замену клиентов лучше не делать отдельной быстрой командой, чтобы не потерять доступы случайно.
+- полную замену клиентов не делать отдельной быстрой командой, чтобы не потерять доступы случайно.
 
 ## Удаление VPN-клиентов
 
@@ -531,6 +429,12 @@ sudo journalctl -u trusttunnel -f
 
 ```bash
 ./ttctl deploy
+```
+
+Для добавления клиентов после установки не нужен полный deploy; используй:
+
+```bash
+./ttctl add-client
 ```
 
 ## Удаление TrustTunnel с сервера
