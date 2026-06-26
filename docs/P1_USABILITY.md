@@ -67,7 +67,7 @@ Then deploy:
 ./ttctl deploy
 ```
 
-When `vault.yml` exists, deploy/status/uninstall/add-client automatically include it and ask for the Vault password.
+When `vault.yml` exists, deploy/status/uninstall/add-client/remove-client automatically include it. During one `ttctl` command run, the Vault password is requested once, stored in a temporary mode-600 password file, reused by internal Ansible calls, and removed on exit.
 
 ## Non-root SSH user
 
@@ -160,6 +160,44 @@ Use a custom input file:
 ./ttctl add-client ./my_new_clients.toml
 ```
 
+## Remove clients after deployment
+
+Prepare the default input file:
+
+```text
+roles/trusttunnel_endpoint/files/remove_clients.txt
+```
+
+Then run:
+
+```bash
+./ttctl remove-client
+```
+
+This is also a lightweight post-install operation, not a full deploy.
+
+It does the following:
+
+1. fetches `/opt/trusttunnel/credentials.toml` from the server if the local file is missing;
+2. removes requested usernames from the local credentials file;
+3. checks that `trusttunnel.service` is active;
+4. uploads the updated credentials file back to `/opt/trusttunnel/credentials.toml`;
+5. runs `systemctl reload-or-restart trusttunnel`;
+6. verifies that the service is still active;
+7. removes generated client config files for those users on the server and locally.
+
+Force a fresh server sync before removing:
+
+```bash
+./ttctl remove-client --sync-from-server
+```
+
+Remove clients locally but do not apply immediately:
+
+```bash
+./ttctl remove-client --no-apply
+```
+
 ## Daily operations
 
 Check service status:
@@ -168,7 +206,13 @@ Check service status:
 ./ttctl status
 ```
 
-Remove clients through the existing helper:
+Add clients:
+
+```bash
+./ttctl add-client
+```
+
+Remove clients:
 
 ```bash
 ./ttctl remove-client
