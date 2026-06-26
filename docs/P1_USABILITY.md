@@ -67,7 +67,7 @@ Then deploy:
 ./ttctl deploy
 ```
 
-When `vault.yml` exists, deploy/status/uninstall automatically include it and ask for the Vault password.
+When `vault.yml` exists, deploy/status/uninstall/add-client automatically include it and ask for the Vault password.
 
 ## Non-root SSH user
 
@@ -127,7 +127,18 @@ Then run:
 ./ttctl add-client
 ```
 
-If local `roles/trusttunnel_endpoint/files/credentials.toml` is missing, `ttctl add-client` fetches the current `/opt/trusttunnel/credentials.toml` from the server first. It then appends only new usernames, skips duplicates, and offers to deploy the updated credentials back to the server.
+This is a lightweight post-install operation, not a full deploy.
+
+It does the following:
+
+1. fetches `/opt/trusttunnel/credentials.toml` from the server if the local file is missing;
+2. appends only new usernames to the local credentials file;
+3. skips duplicate usernames;
+4. checks that `trusttunnel.service` is active;
+5. uploads the updated credentials file back to `/opt/trusttunnel/credentials.toml`;
+6. runs `systemctl reload-or-restart trusttunnel`;
+7. verifies that the service is still active;
+8. generates and fetches client configs to `client_configs/`.
 
 Force a fresh server sync before adding:
 
@@ -135,11 +146,13 @@ Force a fresh server sync before adding:
 ./ttctl add-client --sync-from-server
 ```
 
-Add clients locally but do not deploy immediately:
+Add clients locally but do not apply immediately:
 
 ```bash
-./ttctl add-client --no-deploy
+./ttctl add-client --no-apply
 ```
+
+`--no-deploy` remains accepted as an alias for `--no-apply`.
 
 Use a custom input file:
 
