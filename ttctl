@@ -1,0 +1,257 @@
+#!/bin/bash
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/deploy.yml"
+INVENTORY_FILE="${SCRIPT_DIR}/inventory.ini"
+VARS_FILE="${SCRIPT_DIR}/vars.yml"
+CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./ttctl init [--config deploy.yml]
+  ./ttctl deploy [extra ansible-playbook args...]
+  ./ttctl status
+  ./ttctl add-client [new_clients.toml]
+  ./ttctl remove-client [remove_clients.txt]
+  ./ttctl import-credentials <credentials.toml>
+  ./ttctl uninstall [extra ansible-playbook args...]
+
+Commands:
+  init                 Generate inventory.ini and vars.yml from deploy.yml.
+  deploy               Run existing deploy helper when present, otherwise run ansible-playbook.
+  status               Check remote systemd status for the TrustTunnel service.
+  add-client           Run add_vpn_clients.sh.
+  remove-client        Run remove_vpn_clients.sh.
+  import-credentials   Copy an existing credentials.toml into the Ansible role files directory.
+  uninstall            Run existing uninstall helper when present, otherwise run uninstall.yml.
+
+Rollback:
+  This helper does not modify git main. To discard generated local runtime files:
+    rm -f inventory.ini vars.yml vault.yml deploy.sh uninstall.sh
+    rm -rf client_configs
+EOF
+}
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+require_file() {
+  file_path="$1"
+  [ -f "$file_path" ] || fail "file not found: $file_path"
+}
+
+resolve_config_file() {
+  config_file="$DEFAULT_CONFIG_FILE"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --config)
+        [ "$#" -ge 2 ] || fail "--config requires a path"
+        config_file="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "unknown init argument: $1"
+        ;;
+    esac
+  done
+  printf "%s" "$config_file"
+}
+
+init_from_config() {
+  config_file=$(resolve_config_file "$@")
+  require_file "$config_file"
+
+  CONFIG_FILE="$config_file" \
+  INVENTORY_FILE="$INVENTORY_FILE" \
+  VARS_FILE="$VARS_FILE" \
+  CREDENTIALS_FILES_DIR="$CREDENTIALS_FILES_DIR" \
+  python3 <<'PY'
+import os
+import shutil
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("Error: Python package 'yaml' was not found. Install python3-yaml or PyYAML, or use ./bootstrap.sh.", file=sys.stderr)
+    sys.exit(1)
+
+config_path = Path(os.environ["CONFIG_FILE"])
+inventory_path = Path(os.environ["INVENTORY_FILE"])
+vars_path = Path(os.environ["VARS_FILE"])
+credentials_dir = Path(os.environ["CREDENTIALS_FILES_DIR"])
+
+def yaml_quote(value):
+    return yaml.safe_dump(value, default_flow_style=True, allow_unicode=True).strip()
+
+with config_path.open("r", encoding="utf-8") as fh:
+    config = yaml.safe_load(fh) or {}
+
+server = config.get("server") or {}
+trusttunnel = config.get("trusttunnel") or {}
+ansible = config.get("ansible") or {}
+
+host = server.get("host")
+if not host:
+    print("Error: deploy config must contain server.host", file=sys.stderr)
+    sys.exit(1)
+
+ssh_user = server.get("ssh_user", "root")
+become = bool(server.get("become", ssh_user != "root"))
+
+inventory_vars = [f"ansible_user={ssh_user}"]
+if become:
+    inventory_vars.append("ansible_become=true")
+
+inventory_path.write_text("[trusttunnel]\n{} {}\n".format(host, " ".join(inventory_vars)), encoding="utf-8")
+inventory_path.chmod(0o600)
+
+credentials_source = trusttunnel.get("existing_credentials_source", "") or ""
+credentials_file = trusttunnel.get("existing_credentials_file", "") or ""
+if credentials_source:
+    src = Path(credentials_source).expanduser()
+    if not src.is_file():
+        print(f"Error: existing_credentials_source does not exist: {src}", file=sys.stderr)
+        sys.exit(1)
+    credentials_dir.mkdir(parents=True, exist_ok=True)
+    dst_name = credentials_file or src.name
+    dst = credentials_dir / dst_name
+    shutil.copy2(src, dst)
+    dst.chmod(0o600)
+    credentials_file = dst_name
+
+public_address = trusttunnel.get("public_address") or f"{trusttunnel.get('domain', '')}:443"
+
+vars_data = {
+    "trusttunnel_domain": trusttunnel.get("domain", ""),
+    "trusttunnel_public_address": public_address,
+    "trusttunnel_cert_mode": trusttunnel.get("cert_mode", "letsencrypt"),
+    "trusttunnel_acme_email": trusttunnel.get("acme_email", ""),
+    "trusttunnel_existing_cert_chain_path": trusttunnel.get("existing_cert_chain_path", ""),
+    "trusttunnel_existing_private_key_path": trusttunnel.get("existing_private_key_path", ""),
+    "trusttunnel_open_firewall": bool(trusttunnel.get("open_firewall", False)),
+    "trusttunnel_firewall_backend": trusttunnel.get("firewall_backend", "auto"),
+    "trusttunnel_existing_credentials_file": credentials_file,
+    "trusttunnel_clients": trusttunnel.get("clients", []),
+}
+
+optional_keys = {
+    "install_version": "trusttunnel_install_version",
+    "client_config_format": "trusttunnel_client_config_format",
+    "prune_client_configs": "trusttunnel_prune_client_configs",
+    "generate_client_random_prefix": "trusttunnel_generate_client_random_prefix",
+    "dns_upstreams": "trusttunnel_dns_upstreams",
+    "rules": "trusttunnel_rules",
+}
+for src_key, dst_key in optional_keys.items():
+    if src_key in trusttunnel:
+        vars_data[dst_key] = trusttunnel[src_key]
+
+if ansible.get("password"):
+    vars_data["ansible_password"] = ansible["password"]
+if ansible.get("become_password"):
+    vars_data["ansible_become_password"] = ansible["become_password"]
+
+vars_path.write_text(yaml.safe_dump(vars_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+vars_path.chmod(0o600)
+
+print(f"Generated {inventory_path}")
+print(f"Generated {vars_path}")
+if credentials_file:
+    print(f"Imported credentials as roles/trusttunnel_endpoint/files/{credentials_file}")
+PY
+}
+
+run_playbook() {
+  playbook_name="$1"
+  shift
+
+  require_file "$INVENTORY_FILE"
+  require_file "$VARS_FILE"
+
+  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass "$@"
+  else
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" "$@"
+  fi
+}
+
+deploy() {
+  if [ -x "${SCRIPT_DIR}/deploy.sh" ]; then
+    "${SCRIPT_DIR}/deploy.sh" "$@"
+  else
+    run_playbook site.yml "$@"
+  fi
+}
+
+uninstall() {
+  if [ -x "${SCRIPT_DIR}/uninstall.sh" ]; then
+    "${SCRIPT_DIR}/uninstall.sh" "$@"
+  else
+    run_playbook uninstall.yml "$@"
+  fi
+}
+
+status() {
+  require_file "$INVENTORY_FILE"
+  ansible trusttunnel -i "$INVENTORY_FILE" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+}
+
+import_credentials() {
+  [ "$#" -eq 1 ] || fail "import-credentials requires one path"
+  src="$1"
+  require_file "$src"
+  mkdir -p "$CREDENTIALS_FILES_DIR"
+  cp "$src" "${CREDENTIALS_FILES_DIR}/credentials.toml"
+  chmod 600 "${CREDENTIALS_FILES_DIR}/credentials.toml"
+  echo "Imported credentials to roles/trusttunnel_endpoint/files/credentials.toml"
+  echo "Set trusttunnel_existing_credentials_file: credentials.toml in vars.yml or deploy.yml."
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  init)
+    shift
+    init_from_config "$@"
+    ;;
+  deploy)
+    shift
+    deploy "$@"
+    ;;
+  status)
+    shift
+    [ "$#" -eq 0 ] || fail "status does not accept arguments"
+    status
+    ;;
+  add-client)
+    shift
+    "${SCRIPT_DIR}/add_vpn_clients.sh" "$@"
+    ;;
+  remove-client)
+    shift
+    "${SCRIPT_DIR}/remove_vpn_clients.sh" "$@"
+    ;;
+  import-credentials)
+    shift
+    import_credentials "$@"
+    ;;
+  uninstall)
+    shift
+    uninstall "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    fail "unknown command: $cmd"
+    ;;
+esac
