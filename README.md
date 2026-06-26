@@ -335,7 +335,7 @@ password = "alice-password"
 3. пропускает клиентов с уже существующим `username`;
 4. проверяет, что `trusttunnel.service` активен на сервере;
 5. копирует обновленный `credentials.toml` обратно на сервер в `/opt/trusttunnel/credentials.toml`;
-6. выполняет `systemctl reload-or-restart trusttunnel`;
+6. выполняет `systemctl restart trusttunnel`, потому что TrustTunnel перечитывает `credentials.toml` только после рестарта процесса;
 7. проверяет, что сервис остался активен;
 8. генерирует клиентские конфиги для пользователей из `new_clients.toml`;
 9. скачивает клиентские конфиги локально в `client_configs/`.
@@ -387,7 +387,7 @@ bob
 2. удаляет указанных пользователей из локального `credentials.toml`;
 3. проверяет, что `trusttunnel.service` активен;
 4. копирует обновленный `credentials.toml` обратно на сервер;
-5. выполняет `systemctl reload-or-restart trusttunnel`;
+5. выполняет `systemctl restart trusttunnel`, потому что TrustTunnel перечитывает `credentials.toml` только после рестарта процесса;
 6. проверяет, что сервис остался активен;
 7. удаляет сгенерированные client config-файлы для этих пользователей на сервере и локально.
 
