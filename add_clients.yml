@@ -10,8 +10,8 @@
     trusttunnel_credentials_local_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/credentials.toml"
     trusttunnel_new_clients_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/new_clients.toml"
     trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
-    trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
-    trusttunnel_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
+    trusttunnel_effective_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_effective_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
     trusttunnel_sync_from_server: auto
     trusttunnel_apply_to_server: true
 
@@ -155,10 +155,10 @@
         ./trusttunnel_endpoint vpn.toml hosts.toml
         -c {{ item | quote }}
         -a {{ trusttunnel_public_address | quote }}
-        --format {{ trusttunnel_client_config_format | quote }}
-        {% for upstream in trusttunnel_dns_upstreams %} --dns-upstream {{ upstream | quote }}{% endfor %}
-        > {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_client_config_format) | quote }};
-        chmod 600 {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_client_config_format) | quote }}
+        --format {{ trusttunnel_effective_client_config_format | quote }}
+        {% for upstream in trusttunnel_effective_dns_upstreams %} --dns-upstream {{ upstream | quote }}{% endfor %}
+        > {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_effective_client_config_format) | quote }};
+        chmod 600 {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_effective_client_config_format) | quote }}
       args:
         executable: /bin/bash
       loop: "{{ trusttunnel_added_client_usernames }}"
@@ -166,8 +166,8 @@
 
     - name: Fetch generated client configs
       ansible.builtin.fetch:
-        src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
-        dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
+        src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
+        dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         flat: true
       loop: "{{ trusttunnel_added_client_usernames }}"
       when: trusttunnel_apply_to_server | bool
