@@ -12,23 +12,9 @@
     trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
     trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
     trusttunnel_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
+    trusttunnel_sync_from_server: auto
 
   pre_tasks:
-    - name: Check local credentials file exists
-      ansible.builtin.stat:
-        path: "{{ trusttunnel_credentials_local_file }}"
-      register: trusttunnel_local_credentials_file
-      delegate_to: localhost
-      become: false
-
-    - name: Validate local credentials file
-      ansible.builtin.assert:
-        that:
-          - trusttunnel_local_credentials_file.stat.exists
-        fail_msg: "Local credentials file does not exist: {{ trusttunnel_credentials_local_file }}"
-      delegate_to: localhost
-      become: false
-
     - name: Check local new clients file exists
       ansible.builtin.stat:
         path: "{{ trusttunnel_new_clients_file }}"
@@ -43,6 +29,57 @@
         fail_msg: "Local new clients file does not exist: {{ trusttunnel_new_clients_file }}"
       delegate_to: localhost
       become: false
+
+    - name: Check local credentials file exists
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_credentials_local_file }}"
+      register: trusttunnel_local_credentials_file
+      delegate_to: localhost
+      become: false
+
+    - name: Check TrustTunnel service is active
+      ansible.builtin.command:
+        cmd: systemctl is-active trusttunnel
+      register: trusttunnel_service_active
+      changed_when: false
+      failed_when: trusttunnel_service_active.rc != 0
+
+    - name: Fetch current server credentials when needed
+      ansible.builtin.fetch:
+        src: "{{ trusttunnel_credentials_remote_file }}"
+        dest: "{{ trusttunnel_credentials_local_file }}"
+        flat: true
+      when:
+        - trusttunnel_sync_from_server in ['yes', 'auto']
+        - trusttunnel_sync_from_server == 'yes' or not trusttunnel_local_credentials_file.stat.exists
+
+    - name: Re-check local credentials file after optional fetch
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_credentials_local_file }}"
+      register: trusttunnel_local_credentials_file_after_fetch
+      delegate_to: localhost
+      become: false
+
+    - name: Validate local credentials file
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_local_credentials_file_after_fetch.stat.exists
+        fail_msg: "Local credentials file does not exist: {{ trusttunnel_credentials_local_file }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Add requested users to local credentials file
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/add_vpn_clients.sh"
+          - "{{ trusttunnel_new_clients_file }}"
+          - "{{ trusttunnel_credentials_local_file }}"
+      environment:
+        TRUSTTUNNEL_DEPLOY_AFTER_ADD: "no"
+      delegate_to: localhost
+      become: false
+      register: trusttunnel_local_add_clients_result
+      changed_when: "'Added VPN client:' in trusttunnel_local_add_clients_result.stdout"
 
     - name: Parse usernames from new clients file
       ansible.builtin.set_fact:
@@ -73,13 +110,6 @@
       become: false
 
   tasks:
-    - name: Check TrustTunnel service is active
-      ansible.builtin.command:
-        cmd: systemctl is-active trusttunnel
-      register: trusttunnel_service_active
-      changed_when: false
-      failed_when: trusttunnel_service_active.rc != 0
-
     - name: Upload updated credentials file
       ansible.builtin.copy:
         src: "{{ trusttunnel_credentials_local_file }}"
