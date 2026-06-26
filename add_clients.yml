@@ -13,6 +13,7 @@
     trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
     trusttunnel_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
     trusttunnel_sync_from_server: auto
+    trusttunnel_apply_to_server: true
 
   pre_tasks:
     - name: Check local new clients file exists
@@ -37,12 +38,15 @@
       delegate_to: localhost
       become: false
 
-    - name: Check TrustTunnel service is active
+    - name: Check TrustTunnel service is active before optional sync/apply
       ansible.builtin.command:
         cmd: systemctl is-active trusttunnel
       register: trusttunnel_service_active
       changed_when: false
       failed_when: trusttunnel_service_active.rc != 0
+      when:
+        - trusttunnel_apply_to_server | bool or trusttunnel_sync_from_server in ['yes', 'auto']
+        - trusttunnel_sync_from_server == 'yes' or trusttunnel_apply_to_server | bool or not trusttunnel_local_credentials_file.stat.exists
 
     - name: Fetch current server credentials when needed
       ansible.builtin.fetch:
@@ -108,6 +112,7 @@
         fail_msg: "trusttunnel_public_address is empty. Run ./ttctl init --config deploy.yml first."
       delegate_to: localhost
       become: false
+      when: trusttunnel_apply_to_server | bool
 
   tasks:
     - name: Upload updated credentials file
@@ -118,11 +123,13 @@
         group: root
         mode: "0600"
         backup: true
+      when: trusttunnel_apply_to_server | bool
 
     - name: Reload or restart TrustTunnel service
       ansible.builtin.command:
         cmd: systemctl reload-or-restart trusttunnel
       changed_when: true
+      when: trusttunnel_apply_to_server | bool
 
     - name: Verify TrustTunnel service is active after reload/restart
       ansible.builtin.command:
@@ -130,6 +137,7 @@
       register: trusttunnel_service_active_after_reload
       changed_when: false
       failed_when: trusttunnel_service_active_after_reload.rc != 0
+      when: trusttunnel_apply_to_server | bool
 
     - name: Ensure local client config directory exists
       ansible.builtin.file:
@@ -138,6 +146,7 @@
         mode: "0700"
       delegate_to: localhost
       become: false
+      when: trusttunnel_apply_to_server | bool
 
     - name: Generate client configs for added users
       ansible.builtin.shell: >-
@@ -153,6 +162,7 @@
       args:
         executable: /bin/bash
       loop: "{{ trusttunnel_added_client_usernames }}"
+      when: trusttunnel_apply_to_server | bool
 
     - name: Fetch generated client configs
       ansible.builtin.fetch:
@@ -160,9 +170,13 @@
         dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
         flat: true
       loop: "{{ trusttunnel_added_client_usernames }}"
+      when: trusttunnel_apply_to_server | bool
 
     - name: Report added client operation result
       ansible.builtin.debug:
-        msg:
-          - "Applied credentials file to {{ inventory_hostname }}."
-          - "Generated and fetched client configs for: {{ trusttunnel_added_client_usernames | join(', ') }}"
+        msg: >-
+          {{ ['Updated local credentials file: ' ~ trusttunnel_credentials_local_file]
+             + (trusttunnel_apply_to_server | bool
+                | ternary(['Applied credentials file to ' ~ inventory_hostname,
+                           'Generated and fetched client configs for: ' ~ (trusttunnel_added_client_usernames | join(', '))],
+                          ['Did not apply changes to server because trusttunnel_apply_to_server=false'])) }}
