@@ -8,6 +8,7 @@ VARS_FILE="${SCRIPT_DIR}/vars.yml"
 VAULT_FILE="${SCRIPT_DIR}/vault.yml"
 CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
 DEFAULT_NEW_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/new_clients.toml"
+DEFAULT_REMOVE_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/remove_clients.txt"
 DEFAULT_CREDENTIALS_FILE="${CREDENTIALS_FILES_DIR}/credentials.toml"
 REMOTE_INSTALL_DIR="/opt/trusttunnel"
 REMOTE_CREDENTIALS_FILE="${REMOTE_INSTALL_DIR}/credentials.toml"
@@ -21,7 +22,7 @@ Usage:
   ./ttctl deploy [extra ansible-playbook args...]
   ./ttctl status
   ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [new_clients.toml] [credentials.toml]
-  ./ttctl remove-client [remove_clients.txt]
+  ./ttctl remove-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [remove_clients.txt] [credentials.toml]
   ./ttctl import-credentials <credentials.toml>
   ./ttctl uninstall [extra ansible-playbook args...]
 
@@ -38,12 +39,17 @@ Commands:
                        Then it appends new users locally, copies credentials.toml
                        back to the server, reloads/restarts TrustTunnel, generates
                        client configs, and fetches them locally.
+  remove-client        Lightweight post-install client remove operation.
+                       If local credentials.toml is missing, ttctl fetches
+                       /opt/trusttunnel/credentials.toml from the server first.
+                       Then it removes users locally, copies credentials.toml
+                       back to the server, reloads/restarts TrustTunnel, and removes
+                       generated client config files for those users.
                        --sync-from-server forces a refresh before editing.
                        --no-sync-from-server disables automatic fetch.
                        --apply or --no-apply skips the apply prompt.
                        --deploy is accepted as an alias for --apply.
                        --no-deploy is accepted as an alias for --no-apply.
-  remove-client        Run remove_vpn_clients.sh.
   import-credentials   Copy an existing credentials.toml into the Ansible role files directory.
   uninstall            Run existing uninstall helper when present, otherwise run uninstall.yml.
 
@@ -119,6 +125,19 @@ write_vault_password_file() {
   VAULT_PASSWORD_FILE=$(mktemp /tmp/trusttunnel-ttctl-vault-pass.XXXXXX)
   chmod 600 "$VAULT_PASSWORD_FILE"
   printf "%s\n" "$vault_password" > "$VAULT_PASSWORD_FILE"
+}
+
+ensure_vault_password_file() {
+  if [ ! -f "$VAULT_FILE" ]; then
+    return 0
+  fi
+  if [ -n "${VAULT_PASSWORD_FILE:-}" ] && [ -f "$VAULT_PASSWORD_FILE" ]; then
+    return 0
+  fi
+
+  vault_password=$(read_secret "Ansible Vault password")
+  [ -n "$vault_password" ] || fail "Vault password cannot be empty"
+  write_vault_password_file "$vault_password"
 }
 
 resolve_init_options() {
@@ -325,7 +344,8 @@ run_playbook() {
   require_file "$VARS_FILE"
 
   if [ -f "$VAULT_FILE" ]; then
-    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --ask-vault-pass "$@"
+    ensure_vault_password_file
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --vault-password-file "$VAULT_PASSWORD_FILE" "$@"
   else
     ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" "$@"
   fi
@@ -336,7 +356,8 @@ run_ansible_adhoc() {
   require_file "$VARS_FILE"
 
   if [ -f "$VAULT_FILE" ]; then
-    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --ask-vault-pass "$@"
+    ensure_vault_password_file
+    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --vault-password-file "$VAULT_PASSWORD_FILE" "$@"
   else
     ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" "$@"
   fi
@@ -344,7 +365,12 @@ run_ansible_adhoc() {
 
 deploy() {
   if [ -x "${SCRIPT_DIR}/deploy.sh" ]; then
-    "${SCRIPT_DIR}/deploy.sh" "$@"
+    if [ -f "$VAULT_FILE" ]; then
+      ensure_vault_password_file
+      ANSIBLE_VAULT_PASSWORD_FILE="$VAULT_PASSWORD_FILE" "${SCRIPT_DIR}/deploy.sh" "$@"
+    else
+      "${SCRIPT_DIR}/deploy.sh" "$@"
+    fi
   else
     run_playbook site.yml "$@"
   fi
@@ -352,7 +378,12 @@ deploy() {
 
 uninstall() {
   if [ -x "${SCRIPT_DIR}/uninstall.sh" ]; then
-    "${SCRIPT_DIR}/uninstall.sh" "$@"
+    if [ -f "$VAULT_FILE" ]; then
+      ensure_vault_password_file
+      ANSIBLE_VAULT_PASSWORD_FILE="$VAULT_PASSWORD_FILE" "${SCRIPT_DIR}/uninstall.sh" "$@"
+    else
+      "${SCRIPT_DIR}/uninstall.sh" "$@"
+    fi
   else
     run_playbook uninstall.yml "$@"
   fi
@@ -392,6 +423,19 @@ parse_new_client_usernames() {
       sub(/^[^=]*=[ \t]*/, "", value)
       username = toml_value(value)
       if (username != "") print username
+    }
+  ' "$input_file" | sort -u
+}
+
+parse_remove_client_usernames() {
+  input_file="$1"
+  awk '
+    {
+      line = $0
+      sub(/[ \t]*#.*/, "", line)
+      sub(/^[ \t\r\n]+/, "", line)
+      sub(/[ \t\r\n]+$/, "", line)
+      if (line != "") print line
     }
   ' "$input_file" | sort -u
 }
@@ -496,11 +540,42 @@ generate_and_fetch_client_configs() {
   echo "Client configs fetched to ${LOCAL_CLIENT_CONFIG_DIR}" >&2
 }
 
-add_client() {
+remove_client_configs() {
+  input_file="$1"
+  client_format=$(read_vars_value trusttunnel_client_config_format toml)
+  usernames_file=$(mktemp /tmp/trusttunnel-removed-users.XXXXXX)
+  parse_remove_client_usernames "$input_file" > "$usernames_file"
+
+  if [ ! -s "$usernames_file" ]; then
+    rm -f "$usernames_file"
+    fail "No usernames found in $input_file."
+  fi
+
+  while IFS= read -r username; do
+    case "$username" in
+      *[!A-Za-z0-9_.@-]*|"")
+        rm -f "$usernames_file"
+        fail "Invalid username parsed from $input_file: $username"
+        ;;
+    esac
+
+    echo "Removing generated client config for ${username}..." >&2
+    run_ansible_adhoc -b -m ansible.builtin.file -a "path=${REMOTE_INSTALL_DIR}/client_${username}.${client_format} state=absent"
+    rm -f "${LOCAL_CLIENT_CONFIG_DIR}"/*"_client_${username}.${client_format}" 2>/dev/null || true
+  done < "$usernames_file"
+
+  rm -f "$usernames_file"
+}
+
+resolve_client_operation_args() {
+  operation_name="$1"
+  default_input_file="$2"
+  shift 2
+
   sync_from_server="auto"
   apply_after="ask"
   positional_count=0
-  input_file="$DEFAULT_NEW_CLIENTS_FILE"
+  input_file="$default_input_file"
   credentials_file="$DEFAULT_CREDENTIALS_FILE"
 
   while [ "$#" -gt 0 ]; do
@@ -526,14 +601,14 @@ add_client() {
         exit 0
         ;;
       --*)
-        fail "unknown add-client argument: $1"
+        fail "unknown ${operation_name} argument: $1"
         ;;
       *)
         positional_count=$((positional_count + 1))
         case "$positional_count" in
           1) input_file="$1" ;;
           2) credentials_file="$1" ;;
-          *) fail "too many add-client positional arguments" ;;
+          *) fail "too many ${operation_name} positional arguments" ;;
         esac
         shift
         ;;
@@ -549,9 +624,10 @@ add_client() {
   elif [ "$sync_from_server" = "yes" ]; then
     fail "--sync-from-server is supported only for the default credentials path: ${DEFAULT_CREDENTIALS_FILE}"
   fi
+}
 
-  TRUSTTUNNEL_DEPLOY_AFTER_ADD=no "${SCRIPT_DIR}/add_vpn_clients.sh" "$input_file" "$credentials_file"
-
+confirm_apply() {
+  label="$1"
   case "$apply_after" in
     yes)
       should_apply="yes"
@@ -560,7 +636,7 @@ add_client() {
       should_apply="no"
       ;;
     ask)
-      if prompt_yes_no "Apply updated credentials to the server now? yes/no" "yes"; then
+      if prompt_yes_no "$label" "yes"; then
         should_apply="yes"
       else
         should_apply="no"
@@ -570,13 +646,37 @@ add_client() {
       fail "invalid apply_after state: $apply_after"
       ;;
   esac
+}
+
+add_client() {
+  resolve_client_operation_args "add-client" "$DEFAULT_NEW_CLIENTS_FILE" "$@"
+
+  TRUSTTUNNEL_DEPLOY_AFTER_ADD=no "${SCRIPT_DIR}/add_vpn_clients.sh" "$input_file" "$credentials_file"
+
+  confirm_apply "Apply updated credentials to the server now? yes/no"
 
   if [ "$should_apply" = "yes" ]; then
     apply_credentials_to_server "$credentials_file"
     generate_and_fetch_client_configs "$input_file"
   else
     echo "Credentials were updated locally. Apply them later with:" >&2
-    echo "  ./ttctl add-client --sync-from-server --apply $input_file" >&2
+    echo "  ./ttctl add-client --apply $input_file" >&2
+  fi
+}
+
+remove_client() {
+  resolve_client_operation_args "remove-client" "$DEFAULT_REMOVE_CLIENTS_FILE" "$@"
+
+  TRUSTTUNNEL_DEPLOY_AFTER_REMOVE=no "${SCRIPT_DIR}/remove_vpn_clients.sh" "$input_file" "$credentials_file"
+
+  confirm_apply "Apply updated credentials to the server now? yes/no"
+
+  if [ "$should_apply" = "yes" ]; then
+    apply_credentials_to_server "$credentials_file"
+    remove_client_configs "$input_file"
+  else
+    echo "Credentials were updated locally. Apply them later with:" >&2
+    echo "  ./ttctl remove-client --apply $input_file" >&2
   fi
 }
 
@@ -612,7 +712,7 @@ case "$cmd" in
     ;;
   remove-client)
     shift
-    "${SCRIPT_DIR}/remove_vpn_clients.sh" "$@"
+    remove_client "$@"
     ;;
   import-credentials)
     shift
