@@ -91,7 +91,7 @@ cp deploy.example.yml deploy.yml
 
 Файл `deploy.yml` добавлен в `.gitignore`, потому что в нем могут быть реальные адреса, пользователи и секреты.
 
-Ниже пример минимального файла для нового сервера:
+Минимальный пример для сервера, куда ты подключаешься по SSH-ключу под `root`:
 
 ```yaml
 ---
@@ -114,13 +114,159 @@ trusttunnel:
       password: change-me
 ```
 
-### Какие поля обязательно заменить
+## Откуда Ansible берет пароль для SSH
 
-#### `server.host`
+Ansible не получает пароль от сервера автоматически. Есть два основных варианта.
 
-IP или DNS-имя сервера, на который Ansible будет подключаться по SSH.
+### Вариант 1. SSH-ключ, пароль в `deploy.yml` не нужен
+
+Это предпочтительный вариант.
+
+Если с твоей управляющей машины уже работает команда:
+
+```bash
+ssh root@203.0.113.10
+```
+
+или:
+
+```bash
+ssh ubuntu@203.0.113.10
+```
+
+и сервер пускает тебя по SSH-ключу, то в `deploy.yml` блок `ansible.password` не нужен.
+
+Пример для root-доступа по SSH-ключу:
+
+```yaml
+server:
+  host: 203.0.113.10
+  ssh_user: root
+  become: false
+```
+
+После `./ttctl init --config deploy.yml` будет создан `inventory.ini` примерно такого вида:
+
+```ini
+[trusttunnel]
+203.0.113.10 ansible_user=root
+```
+
+После этого `./ttctl deploy` запустит Ansible, а Ansible сам использует твой обычный SSH-клиент и доступные SSH-ключи из `~/.ssh/`, `ssh-agent` и стандартной SSH-конфигурации.
+
+### Вариант 2. SSH-пароль, пароль указывается в `deploy.yml`
+
+Если сервер доступен только по паролю, например ты обычно заходишь так:
+
+```bash
+ssh root@203.0.113.10
+# затем руками вводишь пароль
+```
+
+то для `ttctl` можно указать пароль в блоке `ansible`:
+
+```yaml
+server:
+  host: 203.0.113.10
+  ssh_user: root
+  become: false
+
+ansible:
+  password: remote-ssh-password
+```
+
+При выполнении:
+
+```bash
+./ttctl init --config deploy.yml
+```
+
+`ttctl` сгенерирует `vars.yml` и положит туда:
+
+```yaml
+ansible_password: remote-ssh-password
+```
+
+Именно из `ansible_password` Ansible возьмет SSH-пароль.
+
+Важно: для SSH по паролю Ansible обычно требует установленный `sshpass` на управляющей машине.
+
+На Ubuntu/Debian:
+
+```bash
+sudo apt-get install -y sshpass
+```
+
+Если `sshpass` не установлен, Ansible часто падает с ошибкой про password authentication и sshpass.
+
+### Что означает `ansible.become_password`
+
+`become_password` — это не SSH-пароль. Это пароль для `sudo` на удаленном сервере.
+
+Он нужен только если ты подключаешься не под root, а под обычным пользователем, и sudo требует пароль.
 
 Пример:
+
+```yaml
+server:
+  host: 203.0.113.10
+  ssh_user: ubuntu
+  become: true
+
+ansible:
+  password: ssh-password-for-ubuntu
+  become_password: sudo-password-for-ubuntu
+```
+
+После `ttctl init` это превратится в `vars.yml` примерно так:
+
+```yaml
+ansible_password: ssh-password-for-ubuntu
+ansible_become_password: sudo-password-for-ubuntu
+```
+
+Если sudo у пользователя работает без пароля, `become_password` не нужен:
+
+```yaml
+server:
+  host: 203.0.113.10
+  ssh_user: ubuntu
+  become: true
+```
+
+### Почему в примере написано `Prefer Ansible Vault for real secrets`
+
+В `deploy.example.yml` есть блок:
+
+```yaml
+# Optional. Prefer Ansible Vault for real secrets.
+# These values are written to vars.yml with mode 600 by ./ttctl init.
+ansible:
+  # password: remote-ssh-password
+  # become_password: sudo-password
+```
+
+Смысл такой:
+
+- `ansible.password` — SSH-пароль для подключения к серверу;
+- `ansible.become_password` — sudo-пароль на сервере;
+- если раскомментировать эти строки, `ttctl init` запишет их в `vars.yml`;
+- `vars.yml` получает права `600`, то есть читать файл может только владелец;
+- но это все равно обычный текстовый файл, не шифрование.
+
+Поэтому для реальных постоянных секретов безопаснее использовать старый `./bootstrap.sh`, потому что он уже умеет складывать секреты в зашифрованный `vault.yml` через Ansible Vault.
+
+Практическая рекомендация:
+
+- если есть SSH-ключ — используй SSH-ключ и не указывай `ansible.password`;
+- если нужно быстро протестировать парольный доступ — можно временно указать `ansible.password` в `deploy.yml`, но не коммитить этот файл;
+- если нужен постоянный парольный сценарий с секретами — пока лучше использовать `./bootstrap.sh` и Vault.
+
+## Какие поля обязательно заменить
+
+### `server.host`
+
+IP или DNS-имя сервера, на который Ansible будет подключаться по SSH.
 
 ```yaml
 server:
@@ -134,7 +280,7 @@ server:
   host: my-vps.example.com
 ```
 
-#### `server.ssh_user`
+### `server.ssh_user`
 
 SSH-пользователь для подключения.
 
@@ -156,7 +302,7 @@ server:
 
 `become: true` означает, что Ansible будет выполнять задачи через sudo.
 
-#### `trusttunnel.domain`
+### `trusttunnel.domain`
 
 Домен, на который будет выпущен сертификат и который будет использоваться для TLS/SNI.
 
@@ -167,7 +313,7 @@ trusttunnel:
 
 Для режима `letsencrypt` этот домен должен указывать на IP сервера.
 
-#### `trusttunnel.public_address`
+### `trusttunnel.public_address`
 
 Адрес, который попадет в клиентские VPN-конфиги.
 
@@ -180,7 +326,7 @@ trusttunnel:
 
 Если используется внешний load balancer, NAT или нестандартный внешний порт, здесь нужно указать именно тот адрес, к которому будут подключаться клиенты.
 
-#### `trusttunnel.cert_mode`
+### `trusttunnel.cert_mode`
 
 Режим сертификата.
 
@@ -197,7 +343,7 @@ trusttunnel:
 
 Для обычной установки на публичный сервер чаще всего нужен `letsencrypt`.
 
-#### `trusttunnel.acme_email`
+### `trusttunnel.acme_email`
 
 Email для Let's Encrypt:
 
@@ -212,7 +358,7 @@ trusttunnel:
 cert_mode: letsencrypt
 ```
 
-#### `trusttunnel.clients`
+### `trusttunnel.clients`
 
 Список VPN-клиентов, которых нужно создать.
 
@@ -238,9 +384,9 @@ trusttunnel:
 
 Имена пользователей могут содержать латинские буквы, цифры, `_`, `.`, `@` и `-`.
 
-### Firewall-поля
+## Firewall-поля
 
-#### `trusttunnel.open_firewall`
+### `trusttunnel.open_firewall`
 
 ```yaml
 trusttunnel:
@@ -270,7 +416,7 @@ trusttunnel:
 - `443/tcp`;
 - `443/udp`.
 
-#### `trusttunnel.firewall_backend`
+### `trusttunnel.firewall_backend`
 
 ```yaml
 trusttunnel:
@@ -322,6 +468,8 @@ nano deploy.yml
 - `server.host`;
 - `server.ssh_user`;
 - `server.become`;
+- `ansible.password`, если SSH только по паролю;
+- `ansible.become_password`, если sudo требует пароль;
 - `trusttunnel.domain`;
 - `trusttunnel.public_address`;
 - `trusttunnel.cert_mode`;
@@ -375,7 +523,22 @@ server:
 ansible_user=ubuntu ansible_become=true
 ```
 
-Если sudo требует пароль, пока лучше использовать старый `bootstrap.sh`, потому что он уже умеет работать с Ansible Vault для секретов. В `ttctl` прямой Vault-flow пока не реализован.
+Если sudo требует пароль, добавь:
+
+```yaml
+ansible:
+  become_password: sudo-password-for-ubuntu
+```
+
+Если SSH тоже по паролю, добавь оба значения:
+
+```yaml
+ansible:
+  password: ssh-password-for-ubuntu
+  become_password: sudo-password-for-ubuntu
+```
+
+Для долгосрочного хранения таких секретов лучше использовать `./bootstrap.sh` с Ansible Vault.
 
 ## Миграция существующих VPN-клиентов
 
@@ -472,12 +635,6 @@ password = "bob-password"
 
 ```bash
 scp root@SERVER:/opt/trusttunnel/credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
-```
-
-Или, если подключение не под root:
-
-```bash
-scp ubuntu@SERVER:/tmp/credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
 ```
 
 ## Удаление VPN-клиентов
@@ -622,7 +779,7 @@ docs/ROLLBACK.md
 Этот способ полезен, если:
 
 - нужен Ansible Vault для секретов;
-- нужен SSH по паролю;
+- нужен SSH по паролю без ручной настройки `deploy.yml`;
 - не хочется руками заполнять `deploy.yml`;
 - новый `ttctl` workflow пока не подходит.
 
@@ -630,6 +787,8 @@ docs/ROLLBACK.md
 
 Ниже основные переменные, которые можно задавать через `vars.yml` или генерировать через `deploy.yml`.
 
+- `ansible_password` — SSH-пароль для подключения к серверу, если не используется SSH-ключ.
+- `ansible_become_password` — sudo-пароль на сервере, если `become: true` и sudo требует пароль.
 - `trusttunnel_domain` — домен TrustTunnel endpoint.
 - `trusttunnel_public_address` — адрес для клиентских конфигов.
 - `trusttunnel_cert_mode` — `letsencrypt`, `selfsigned` или `existing`.
