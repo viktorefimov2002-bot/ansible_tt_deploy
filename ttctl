@@ -9,7 +9,9 @@ VAULT_FILE="${SCRIPT_DIR}/vault.yml"
 CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
 DEFAULT_NEW_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/new_clients.toml"
 DEFAULT_CREDENTIALS_FILE="${CREDENTIALS_FILES_DIR}/credentials.toml"
-REMOTE_CREDENTIALS_FILE="/opt/trusttunnel/credentials.toml"
+REMOTE_INSTALL_DIR="/opt/trusttunnel"
+REMOTE_CREDENTIALS_FILE="${REMOTE_INSTALL_DIR}/credentials.toml"
+LOCAL_CLIENT_CONFIG_DIR="${SCRIPT_DIR}/client_configs"
 VAULT_PASSWORD_FILE=""
 
 usage() {
@@ -18,7 +20,7 @@ Usage:
   ./ttctl init [--config deploy.yml] [--vault] [--ask-ssh-pass] [--ask-become-pass]
   ./ttctl deploy [extra ansible-playbook args...]
   ./ttctl status
-  ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--deploy|--no-deploy] [new_clients.toml] [credentials.toml]
+  ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [new_clients.toml] [credentials.toml]
   ./ttctl remove-client [remove_clients.txt]
   ./ttctl import-credentials <credentials.toml>
   ./ttctl uninstall [extra ansible-playbook args...]
@@ -28,13 +30,19 @@ Commands:
                        With --vault, secrets are written to encrypted vault.yml.
                        Use --ask-ssh-pass to prompt for the SSH password.
                        Use --ask-become-pass to prompt for the sudo/become password.
-  deploy               Run existing deploy helper when present, otherwise run ansible-playbook.
+  deploy               Run the full install/update playbook.
   status               Check remote systemd status for the TrustTunnel service.
-  add-client           Add clients from new_clients.toml. If local credentials.toml is missing,
-                       ttctl fetches /opt/trusttunnel/credentials.toml from the server first.
+  add-client           Lightweight post-install client add operation.
+                       If local credentials.toml is missing, ttctl fetches
+                       /opt/trusttunnel/credentials.toml from the server first.
+                       Then it appends new users locally, copies credentials.toml
+                       back to the server, reloads/restarts TrustTunnel, generates
+                       client configs, and fetches them locally.
                        --sync-from-server forces a refresh before editing.
                        --no-sync-from-server disables automatic fetch.
-                       --deploy or --no-deploy skips the deploy prompt.
+                       --apply or --no-apply skips the apply prompt.
+                       --deploy is accepted as an alias for --apply.
+                       --no-deploy is accepted as an alias for --no-apply.
   remove-client        Run remove_vpn_clients.sh.
   import-credentials   Copy an existing credentials.toml into the Ansible role files directory.
   uninstall            Run existing uninstall helper when present, otherwise run uninstall.yml.
@@ -362,9 +370,135 @@ fetch_credentials_from_server() {
   echo "Fetched current credentials to ${DEFAULT_CREDENTIALS_FILE}" >&2
 }
 
+parse_new_client_usernames() {
+  input_file="$1"
+  awk '
+    function trim(value) {
+      sub(/^[ \t\r\n]+/, "", value)
+      sub(/[ \t\r\n]+$/, "", value)
+      return value
+    }
+    function toml_value(value) {
+      value = trim(value)
+      if (substr(value, 1, 1) == "\"" && substr(value, length(value), 1) == "\"") {
+        value = substr(value, 2, length(value) - 2)
+      } else if (substr(value, 1, 1) == "'"'"'" && substr(value, length(value), 1) == "'"'"'") {
+        value = substr(value, 2, length(value) - 2)
+      }
+      return value
+    }
+    /^[ \t]*username[ \t]*=/ {
+      value = $0
+      sub(/^[^=]*=[ \t]*/, "", value)
+      username = toml_value(value)
+      if (username != "") print username
+    }
+  ' "$input_file" | sort -u
+}
+
+read_vars_value() {
+  key="$1"
+  default="$2"
+  python3 - "$VARS_FILE" "$key" "$default" <<'PY'
+import sys
+try:
+    import yaml
+except ImportError:
+    print(sys.argv[3])
+    raise SystemExit(0)
+path, key, default = sys.argv[1:4]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+except FileNotFoundError:
+    data = {}
+value = data.get(key, default)
+if value is None:
+    value = default
+print(value)
+PY
+}
+
+read_dns_upstream_args() {
+  python3 - "$VARS_FILE" <<'PY'
+import shlex
+import sys
+try:
+    import yaml
+except ImportError:
+    raise SystemExit(0)
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+except FileNotFoundError:
+    data = {}
+items = data.get("trusttunnel_dns_upstreams") or []
+for item in items:
+    print(" --dns-upstream " + shlex.quote(str(item)), end="")
+PY
+}
+
+apply_credentials_to_server() {
+  credentials_file="$1"
+  require_file "$credentials_file"
+
+  echo "Checking TrustTunnel service on server..." >&2
+  if ! run_ansible_adhoc -b -m ansible.builtin.command -a "systemctl is-active trusttunnel"; then
+    fail "TrustTunnel service is not active on the server. Is TrustTunnel installed? Run ./ttctl status for details."
+  fi
+
+  echo "Uploading updated credentials to ${REMOTE_CREDENTIALS_FILE}..." >&2
+  run_ansible_adhoc -b -m ansible.builtin.copy -a "src=${credentials_file} dest=${REMOTE_CREDENTIALS_FILE} owner=root group=root mode=0600 backup=true"
+
+  echo "Reloading or restarting TrustTunnel..." >&2
+  run_ansible_adhoc -b -m ansible.builtin.command -a "systemctl reload-or-restart trusttunnel"
+
+  echo "Verifying TrustTunnel is active after reload/restart..." >&2
+  run_ansible_adhoc -b -m ansible.builtin.command -a "systemctl is-active trusttunnel"
+}
+
+generate_and_fetch_client_configs() {
+  input_file="$1"
+  client_format=$(read_vars_value trusttunnel_client_config_format toml)
+  public_address=$(read_vars_value trusttunnel_public_address "")
+  dns_args=$(read_dns_upstream_args)
+
+  if [ -z "$public_address" ]; then
+    fail "trusttunnel_public_address is empty in vars.yml. Run ./ttctl init --config deploy.yml first."
+  fi
+
+  mkdir -p "$LOCAL_CLIENT_CONFIG_DIR"
+  usernames_file=$(mktemp /tmp/trusttunnel-added-users.XXXXXX)
+  parse_new_client_usernames "$input_file" > "$usernames_file"
+
+  if [ ! -s "$usernames_file" ]; then
+    rm -f "$usernames_file"
+    fail "No usernames found in $input_file."
+  fi
+
+  while IFS= read -r username; do
+    case "$username" in
+      *[!A-Za-z0-9_.@-]*|"")
+        rm -f "$usernames_file"
+        fail "Invalid username parsed from $input_file: $username"
+        ;;
+    esac
+
+    remote_config="${REMOTE_INSTALL_DIR}/client_${username}.${client_format}"
+    echo "Generating client config for ${username}..." >&2
+    run_ansible_adhoc -b -m ansible.builtin.shell -a "cd ${REMOTE_INSTALL_DIR} && ./trusttunnel_endpoint vpn.toml hosts.toml -c '${username}' -a '${public_address}' --format '${client_format}'${dns_args} > '${remote_config}' && chmod 600 '${remote_config}'"
+
+    echo "Fetching client config for ${username}..." >&2
+    run_ansible_adhoc -b -m ansible.builtin.fetch -a "src=${remote_config} dest=${LOCAL_CLIENT_CONFIG_DIR}/{{ inventory_hostname }}_client_${username}.${client_format} flat=true"
+  done < "$usernames_file"
+
+  rm -f "$usernames_file"
+  echo "Client configs fetched to ${LOCAL_CLIENT_CONFIG_DIR}" >&2
+}
+
 add_client() {
   sync_from_server="auto"
-  deploy_after="ask"
+  apply_after="ask"
   positional_count=0
   input_file="$DEFAULT_NEW_CLIENTS_FILE"
   credentials_file="$DEFAULT_CREDENTIALS_FILE"
@@ -379,12 +513,12 @@ add_client() {
         sync_from_server="no"
         shift
         ;;
-      --deploy)
-        deploy_after="yes"
+      --apply|--deploy)
+        apply_after="yes"
         shift
         ;;
-      --no-deploy)
-        deploy_after="no"
+      --no-apply|--no-deploy)
+        apply_after="no"
         shift
         ;;
       -h|--help)
@@ -418,40 +552,31 @@ add_client() {
 
   TRUSTTUNNEL_DEPLOY_AFTER_ADD=no "${SCRIPT_DIR}/add_vpn_clients.sh" "$input_file" "$credentials_file"
 
-  case "$deploy_after" in
+  case "$apply_after" in
     yes)
-      should_deploy="yes"
+      should_apply="yes"
       ;;
     no)
-      should_deploy="no"
+      should_apply="no"
       ;;
     ask)
-      if prompt_yes_no "Run deploy now to sync credentials and fetch client configs? yes/no" "yes"; then
-        should_deploy="yes"
+      if prompt_yes_no "Apply updated credentials to the server now? yes/no" "yes"; then
+        should_apply="yes"
       else
-        should_deploy="no"
+        should_apply="no"
       fi
       ;;
     *)
-      fail "invalid deploy_after state: $deploy_after"
+      fail "invalid apply_after state: $apply_after"
       ;;
   esac
 
-  if [ "$should_deploy" = "yes" ]; then
-    credentials_dir=$(CDPATH= cd -- "$(dirname -- "$credentials_file")" && pwd)
-    default_dir=$(CDPATH= cd -- "$CREDENTIALS_FILES_DIR" && pwd)
-    if [ "$credentials_dir" != "$default_dir" ]; then
-      fail "automatic deploy is supported only when credentials.toml is under ${CREDENTIALS_FILES_DIR}"
-    fi
-
-    credentials_file_name=$(basename -- "$credentials_file")
-    deploy \
-      -e "trusttunnel_existing_credentials_file=${credentials_file_name}" \
-      -e trusttunnel_generate_client_config=true \
-      -e trusttunnel_fetch_client_configs=true
+  if [ "$should_apply" = "yes" ]; then
+    apply_credentials_to_server "$credentials_file"
+    generate_and_fetch_client_configs "$input_file"
   else
-    echo "Credentials were updated locally. Run deploy later with:" >&2
-    echo "  ./ttctl deploy -e trusttunnel_existing_credentials_file=$(basename -- "$credentials_file")" >&2
+    echo "Credentials were updated locally. Apply them later with:" >&2
+    echo "  ./ttctl add-client --sync-from-server --apply $input_file" >&2
   fi
 }
 
