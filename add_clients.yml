@@ -125,18 +125,18 @@
         backup: true
       when: trusttunnel_apply_to_server | bool
 
-    - name: Reload or restart TrustTunnel service
+    - name: Restart TrustTunnel service to reload credentials
       ansible.builtin.command:
-        cmd: systemctl reload-or-restart trusttunnel
+        cmd: systemctl restart trusttunnel
       changed_when: true
       when: trusttunnel_apply_to_server | bool
 
-    - name: Verify TrustTunnel service is active after reload/restart
+    - name: Verify TrustTunnel service is active after restart
       ansible.builtin.command:
         cmd: systemctl is-active trusttunnel
-      register: trusttunnel_service_active_after_reload
+      register: trusttunnel_service_active_after_restart
       changed_when: false
-      failed_when: trusttunnel_service_active_after_reload.rc != 0
+      failed_when: trusttunnel_service_active_after_restart.rc != 0
       when: trusttunnel_apply_to_server | bool
 
     - name: Ensure local client config directory exists
@@ -178,5 +178,6 @@
           {{ ['Updated local credentials file: ' ~ trusttunnel_credentials_local_file]
              + (trusttunnel_apply_to_server | bool
                 | ternary(['Applied credentials file to ' ~ inventory_hostname,
+                           'Restarted TrustTunnel service to reload credentials',
                            'Generated and fetched client configs for: ' ~ (trusttunnel_added_client_usernames | join(', '))],
                           ['Did not apply changes to server because trusttunnel_apply_to_server=false'])) }}
