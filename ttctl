@@ -5,12 +5,14 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/deploy.yml"
 INVENTORY_FILE="${SCRIPT_DIR}/inventory.ini"
 VARS_FILE="${SCRIPT_DIR}/vars.yml"
+VAULT_FILE="${SCRIPT_DIR}/vault.yml"
 CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
+VAULT_PASSWORD_FILE=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./ttctl init [--config deploy.yml]
+  ./ttctl init [--config deploy.yml] [--vault] [--ask-ssh-pass] [--ask-become-pass]
   ./ttctl deploy [extra ansible-playbook args...]
   ./ttctl status
   ./ttctl add-client [new_clients.toml]
@@ -20,6 +22,9 @@ Usage:
 
 Commands:
   init                 Generate inventory.ini and vars.yml from deploy.yml.
+                       With --vault, secrets are written to encrypted vault.yml.
+                       Use --ask-ssh-pass to prompt for the SSH password.
+                       Use --ask-become-pass to prompt for the sudo/become password.
   deploy               Run existing deploy helper when present, otherwise run ansible-playbook.
   status               Check remote systemd status for the TrustTunnel service.
   add-client           Run add_vpn_clients.sh.
@@ -44,14 +49,64 @@ require_file() {
   [ -f "$file_path" ] || fail "file not found: $file_path"
 }
 
-resolve_config_file() {
+read_secret() {
+  label="$1"
+  if [ ! -r /dev/tty ]; then
+    fail "cannot read secret without an interactive terminal"
+  fi
+
+  printf "%s: " "$label" >&2
+  old_tty_settings=$(stty -g </dev/tty)
+  trap 'stty "$old_tty_settings" </dev/tty' INT TERM
+  stty -echo </dev/tty
+  IFS= read -r value </dev/tty
+  stty "$old_tty_settings" </dev/tty
+  trap - INT TERM
+  printf '\n' >&2
+  printf "%s" "$value"
+}
+
+cleanup() {
+  if [ -n "${VAULT_PASSWORD_FILE:-}" ] && [ -f "$VAULT_PASSWORD_FILE" ]; then
+    rm -f "$VAULT_PASSWORD_FILE"
+  fi
+}
+
+trap cleanup EXIT
+
+write_vault_password_file() {
+  vault_password="$1"
+  VAULT_PASSWORD_FILE=$(mktemp /tmp/trusttunnel-ttctl-vault-pass.XXXXXX)
+  chmod 600 "$VAULT_PASSWORD_FILE"
+  printf "%s\n" "$vault_password" > "$VAULT_PASSWORD_FILE"
+}
+
+resolve_init_options() {
   config_file="$DEFAULT_CONFIG_FILE"
+  vault_enabled="false"
+  ask_ssh_pass="false"
+  ask_become_pass="false"
+
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --config)
         [ "$#" -ge 2 ] || fail "--config requires a path"
         config_file="$2"
         shift 2
+        ;;
+      --vault)
+        vault_enabled="true"
+        shift
+        ;;
+      --ask-ssh-pass)
+        ask_ssh_pass="true"
+        vault_enabled="true"
+        shift
+        ;;
+      --ask-become-pass)
+        ask_become_pass="true"
+        vault_enabled="true"
+        shift
         ;;
       -h|--help)
         usage
@@ -62,17 +117,45 @@ resolve_config_file() {
         ;;
     esac
   done
-  printf "%s" "$config_file"
 }
 
 init_from_config() {
-  config_file=$(resolve_config_file "$@")
+  resolve_init_options "$@"
   require_file "$config_file"
+
+  if [ "$vault_enabled" = "true" ] && ! command -v ansible-vault >/dev/null 2>&1; then
+    fail "ansible-vault was not found in PATH. Install Ansible or run without --vault."
+  fi
+
+  asked_ssh_password=""
+  asked_become_password=""
+  vault_password=""
+
+  if [ "$ask_ssh_pass" = "true" ]; then
+    asked_ssh_password=$(read_secret "Remote SSH password for Ansible")
+    [ -n "$asked_ssh_password" ] || fail "SSH password cannot be empty"
+  fi
+
+  if [ "$ask_become_pass" = "true" ]; then
+    asked_become_password=$(read_secret "Remote sudo/become password for Ansible")
+    [ -n "$asked_become_password" ] || fail "sudo/become password cannot be empty"
+  fi
+
+  if [ "$vault_enabled" = "true" ]; then
+    vault_password=$(read_secret "Ansible Vault password for vault.yml")
+    vault_password_confirm=$(read_secret "Confirm Ansible Vault password")
+    [ -n "$vault_password" ] || fail "Vault password cannot be empty"
+    [ "$vault_password" = "$vault_password_confirm" ] || fail "Vault passwords do not match"
+  fi
 
   CONFIG_FILE="$config_file" \
   INVENTORY_FILE="$INVENTORY_FILE" \
   VARS_FILE="$VARS_FILE" \
+  VAULT_FILE="$VAULT_FILE" \
   CREDENTIALS_FILES_DIR="$CREDENTIALS_FILES_DIR" \
+  TTCTL_VAULT_ENABLED="$vault_enabled" \
+  TTCTL_ASKED_SSH_PASSWORD="$asked_ssh_password" \
+  TTCTL_ASKED_BECOME_PASSWORD="$asked_become_password" \
   python3 <<'PY'
 import os
 import shutil
@@ -88,7 +171,11 @@ except ImportError:
 config_path = Path(os.environ["CONFIG_FILE"])
 inventory_path = Path(os.environ["INVENTORY_FILE"])
 vars_path = Path(os.environ["VARS_FILE"])
+vault_path = Path(os.environ["VAULT_FILE"])
 credentials_dir = Path(os.environ["CREDENTIALS_FILES_DIR"])
+vault_enabled = os.environ.get("TTCTL_VAULT_ENABLED") == "true"
+asked_ssh_password = os.environ.get("TTCTL_ASKED_SSH_PASSWORD", "")
+asked_become_password = os.environ.get("TTCTL_ASKED_BECOME_PASSWORD", "")
 
 with config_path.open("r", encoding="utf-8") as fh:
     config = yaml.safe_load(fh) or {}
@@ -153,26 +240,40 @@ for src_key, dst_key in optional_keys.items():
     if src_key in trusttunnel:
         vars_data[dst_key] = trusttunnel[src_key]
 
-if ansible.get("password"):
-    vars_data["ansible_password"] = ansible["password"]
-if ansible.get("become_password"):
-    vars_data["ansible_become_password"] = ansible["become_password"]
+vault_data = {}
+ssh_password = asked_ssh_password or ansible.get("password", "")
+become_password = asked_become_password or ansible.get("become_password", "")
+
+if vault_enabled:
+    if ssh_password:
+        vault_data["ansible_password"] = ssh_password
+    if become_password:
+        vault_data["ansible_become_password"] = become_password
+else:
+    if ssh_password:
+        vars_data["ansible_password"] = ssh_password
+    if become_password:
+        vars_data["ansible_become_password"] = become_password
 
 vars_path.write_text(yaml.safe_dump(vars_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 vars_path.chmod(0o600)
 
+if vault_enabled:
+    vault_path.write_text(yaml.safe_dump(vault_data or {}, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    vault_path.chmod(0o600)
+
 print(f"Generated {inventory_path}")
 print(f"Generated {vars_path}")
+if vault_enabled:
+    print(f"Generated plaintext {vault_path}; encrypting it next...")
 if credentials_file:
     print(f"Imported credentials as roles/trusttunnel_endpoint/files/{credentials_file}")
 PY
-}
 
-extra_vars_args() {
-  require_file "$VARS_FILE"
-  printf '%s\n' -e "@${VARS_FILE}"
-  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
-    printf '%s\n' -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass
+  if [ "$vault_enabled" = "true" ]; then
+    write_vault_password_file "$vault_password"
+    ansible-vault encrypt "$VAULT_FILE" --vault-password-file "$VAULT_PASSWORD_FILE" >/dev/null
+    echo "Encrypted $VAULT_FILE with Ansible Vault."
   fi
 }
 
