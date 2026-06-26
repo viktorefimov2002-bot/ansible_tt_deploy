@@ -1,7 +1,9 @@
 ---
 # Copy this file to deploy.yml and adjust values.
-# Then run:
+# Then run one of:
 #   ./ttctl init --config deploy.yml
+#   ./ttctl init --config deploy.yml --ask-ssh-pass
+#   ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
 #   ./ttctl deploy
 
 server:
@@ -41,8 +43,14 @@ trusttunnel:
   #   - cidr: 10.0.0.0/8
   #     action: deny
 
-# Optional. Prefer Ansible Vault for real secrets.
-# These values are written to vars.yml with mode 600 by ./ttctl init.
-ansible:
-  # password: remote-ssh-password
-  # become_password: sudo-password
+# Do not put SSH/sudo passwords here for normal use.
+# Prefer interactive Vault-backed prompts:
+#   ./ttctl init --config deploy.yml --ask-ssh-pass
+#   ./ttctl init --config deploy.yml --ask-become-pass
+#   ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+#
+# Those commands write ansible_password / ansible_become_password to encrypted vault.yml.
+# Plaintext fallback is still supported for temporary local testing only:
+# ansible:
+#   password: remote-ssh-password
+#   become_password: sudo-password
