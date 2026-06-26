@@ -90,9 +90,6 @@ inventory_path = Path(os.environ["INVENTORY_FILE"])
 vars_path = Path(os.environ["VARS_FILE"])
 credentials_dir = Path(os.environ["CREDENTIALS_FILES_DIR"])
 
-def yaml_quote(value):
-    return yaml.safe_dump(value, default_flow_style=True, allow_unicode=True).strip()
-
 with config_path.open("r", encoding="utf-8") as fh:
     config = yaml.safe_load(fh) or {}
 
@@ -171,6 +168,14 @@ if credentials_file:
 PY
 }
 
+extra_vars_args() {
+  require_file "$VARS_FILE"
+  printf '%s\n' -e "@${VARS_FILE}"
+  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
+    printf '%s\n' -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass
+  fi
+}
+
 run_playbook() {
   playbook_name="$1"
   shift
@@ -203,7 +208,13 @@ uninstall() {
 
 status() {
   require_file "$INVENTORY_FILE"
-  ansible trusttunnel -i "$INVENTORY_FILE" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+  require_file "$VARS_FILE"
+
+  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
+    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+  else
+    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+  fi
 }
 
 import_credentials() {
