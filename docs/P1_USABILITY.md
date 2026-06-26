@@ -113,18 +113,46 @@ You can also import manually:
 ./ttctl import-credentials ./credentials.toml
 ```
 
+## Add clients after deployment
+
+Prepare the default input file:
+
+```text
+roles/trusttunnel_endpoint/files/new_clients.toml
+```
+
+Then run:
+
+```bash
+./ttctl add-client
+```
+
+If local `roles/trusttunnel_endpoint/files/credentials.toml` is missing, `ttctl add-client` fetches the current `/opt/trusttunnel/credentials.toml` from the server first. It then appends only new usernames, skips duplicates, and offers to deploy the updated credentials back to the server.
+
+Force a fresh server sync before adding:
+
+```bash
+./ttctl add-client --sync-from-server
+```
+
+Add clients locally but do not deploy immediately:
+
+```bash
+./ttctl add-client --no-deploy
+```
+
+Use a custom input file:
+
+```bash
+./ttctl add-client ./my_new_clients.toml
+```
+
 ## Daily operations
 
 Check service status:
 
 ```bash
 ./ttctl status
-```
-
-Add clients through the existing helper:
-
-```bash
-./ttctl add-client
 ```
 
 Remove clients through the existing helper:
