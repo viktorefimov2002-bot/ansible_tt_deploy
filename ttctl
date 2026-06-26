@@ -7,6 +7,9 @@ INVENTORY_FILE="${SCRIPT_DIR}/inventory.ini"
 VARS_FILE="${SCRIPT_DIR}/vars.yml"
 VAULT_FILE="${SCRIPT_DIR}/vault.yml"
 CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
+DEFAULT_NEW_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/new_clients.toml"
+DEFAULT_CREDENTIALS_FILE="${CREDENTIALS_FILES_DIR}/credentials.toml"
+REMOTE_CREDENTIALS_FILE="/opt/trusttunnel/credentials.toml"
 VAULT_PASSWORD_FILE=""
 
 usage() {
@@ -15,7 +18,7 @@ Usage:
   ./ttctl init [--config deploy.yml] [--vault] [--ask-ssh-pass] [--ask-become-pass]
   ./ttctl deploy [extra ansible-playbook args...]
   ./ttctl status
-  ./ttctl add-client [new_clients.toml]
+  ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--deploy|--no-deploy] [new_clients.toml] [credentials.toml]
   ./ttctl remove-client [remove_clients.txt]
   ./ttctl import-credentials <credentials.toml>
   ./ttctl uninstall [extra ansible-playbook args...]
@@ -27,7 +30,11 @@ Commands:
                        Use --ask-become-pass to prompt for the sudo/become password.
   deploy               Run existing deploy helper when present, otherwise run ansible-playbook.
   status               Check remote systemd status for the TrustTunnel service.
-  add-client           Run add_vpn_clients.sh.
+  add-client           Add clients from new_clients.toml. If local credentials.toml is missing,
+                       ttctl fetches /opt/trusttunnel/credentials.toml from the server first.
+                       --sync-from-server forces a refresh before editing.
+                       --no-sync-from-server disables automatic fetch.
+                       --deploy or --no-deploy skips the deploy prompt.
   remove-client        Run remove_vpn_clients.sh.
   import-credentials   Copy an existing credentials.toml into the Ansible role files directory.
   uninstall            Run existing uninstall helper when present, otherwise run uninstall.yml.
@@ -47,6 +54,31 @@ fail() {
 require_file() {
   file_path="$1"
   [ -f "$file_path" ] || fail "file not found: $file_path"
+}
+
+prompt_yes_no() {
+  label="$1"
+  default="$2"
+
+  if [ ! -r /dev/tty ]; then
+    case "$default" in
+      yes) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+
+  while :; do
+    printf "%s [%s]: " "$label" "$default" >&2
+    IFS= read -r value </dev/tty
+    if [ -z "$value" ]; then
+      value="$default"
+    fi
+    case "$value" in
+      yes|y|Y|да|д|Д) return 0 ;;
+      no|n|N|нет|н|Н) return 1 ;;
+      *) printf "Invalid value '%s'. Allowed values: yes/no or да/нет\n" "$value" >&2 ;;
+    esac
+  done
 }
 
 read_secret() {
@@ -284,10 +316,21 @@ run_playbook() {
   require_file "$INVENTORY_FILE"
   require_file "$VARS_FILE"
 
-  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
-    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass "$@"
+  if [ -f "$VAULT_FILE" ]; then
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --ask-vault-pass "$@"
   else
     ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" "$@"
+  fi
+}
+
+run_ansible_adhoc() {
+  require_file "$INVENTORY_FILE"
+  require_file "$VARS_FILE"
+
+  if [ -f "$VAULT_FILE" ]; then
+    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --ask-vault-pass "$@"
+  else
+    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" "$@"
   fi
 }
 
@@ -308,13 +351,107 @@ uninstall() {
 }
 
 status() {
-  require_file "$INVENTORY_FILE"
-  require_file "$VARS_FILE"
+  run_ansible_adhoc -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+}
 
-  if [ -f "${SCRIPT_DIR}/vault.yml" ]; then
-    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${SCRIPT_DIR}/vault.yml" --ask-vault-pass -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+fetch_credentials_from_server() {
+  mkdir -p "$CREDENTIALS_FILES_DIR"
+  echo "Fetching current server credentials from ${REMOTE_CREDENTIALS_FILE}..." >&2
+  run_ansible_adhoc -b -m ansible.builtin.fetch -a "src=${REMOTE_CREDENTIALS_FILE} dest=${DEFAULT_CREDENTIALS_FILE} flat=true"
+  chmod 600 "$DEFAULT_CREDENTIALS_FILE"
+  echo "Fetched current credentials to ${DEFAULT_CREDENTIALS_FILE}" >&2
+}
+
+add_client() {
+  sync_from_server="auto"
+  deploy_after="ask"
+  positional_count=0
+  input_file="$DEFAULT_NEW_CLIENTS_FILE"
+  credentials_file="$DEFAULT_CREDENTIALS_FILE"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --sync-from-server)
+        sync_from_server="yes"
+        shift
+        ;;
+      --no-sync-from-server)
+        sync_from_server="no"
+        shift
+        ;;
+      --deploy)
+        deploy_after="yes"
+        shift
+        ;;
+      --no-deploy)
+        deploy_after="no"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --*)
+        fail "unknown add-client argument: $1"
+        ;;
+      *)
+        positional_count=$((positional_count + 1))
+        case "$positional_count" in
+          1) input_file="$1" ;;
+          2) credentials_file="$1" ;;
+          *) fail "too many add-client positional arguments" ;;
+        esac
+        shift
+        ;;
+    esac
+  done
+
+  require_file "$input_file"
+
+  if [ "$credentials_file" = "$DEFAULT_CREDENTIALS_FILE" ]; then
+    if [ "$sync_from_server" = "yes" ] || { [ "$sync_from_server" = "auto" ] && [ ! -f "$credentials_file" ]; }; then
+      fetch_credentials_from_server
+    fi
+  elif [ "$sync_from_server" = "yes" ]; then
+    fail "--sync-from-server is supported only for the default credentials path: ${DEFAULT_CREDENTIALS_FILE}"
+  fi
+
+  TRUSTTUNNEL_DEPLOY_AFTER_ADD=no "${SCRIPT_DIR}/add_vpn_clients.sh" "$input_file" "$credentials_file"
+
+  case "$deploy_after" in
+    yes)
+      should_deploy="yes"
+      ;;
+    no)
+      should_deploy="no"
+      ;;
+    ask)
+      if prompt_yes_no "Run deploy now to sync credentials and fetch client configs? yes/no" "yes"; then
+        should_deploy="yes"
+      else
+        should_deploy="no"
+      fi
+      ;;
+    *)
+      fail "invalid deploy_after state: $deploy_after"
+      ;;
+  esac
+
+  if [ "$should_deploy" = "yes" ]; then
+    credentials_dir=$(CDPATH= cd -- "$(dirname -- "$credentials_file")" && pwd)
+    default_dir=$(CDPATH= cd -- "$CREDENTIALS_FILES_DIR" && pwd)
+    if [ "$credentials_dir" != "$default_dir" ]; then
+      fail "automatic deploy is supported only when credentials.toml is under ${CREDENTIALS_FILES_DIR}"
+    fi
+
+    credentials_file_name=$(basename -- "$credentials_file")
+    deploy \
+      -e "trusttunnel_existing_credentials_file=${credentials_file_name}" \
+      -e trusttunnel_generate_client_config=true \
+      -e trusttunnel_fetch_client_configs=true
   else
-    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
+    echo "Credentials were updated locally. Run deploy later with:" >&2
+    echo "  ./ttctl deploy -e trusttunnel_existing_credentials_file=$(basename -- "$credentials_file")" >&2
   fi
 }
 
@@ -346,7 +483,7 @@ case "$cmd" in
     ;;
   add-client)
     shift
-    "${SCRIPT_DIR}/add_vpn_clients.sh" "$@"
+    add_client "$@"
     ;;
   remove-client)
     shift
