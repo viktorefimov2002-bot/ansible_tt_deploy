@@ -12,6 +12,7 @@
     trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
     trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
     trusttunnel_sync_from_server: auto
+    trusttunnel_apply_to_server: true
 
   pre_tasks:
     - name: Check local remove clients file exists
@@ -36,12 +37,15 @@
       delegate_to: localhost
       become: false
 
-    - name: Check TrustTunnel service is active
+    - name: Check TrustTunnel service is active before optional sync/apply
       ansible.builtin.command:
         cmd: systemctl is-active trusttunnel
       register: trusttunnel_service_active
       changed_when: false
       failed_when: trusttunnel_service_active.rc != 0
+      when:
+        - trusttunnel_apply_to_server | bool or trusttunnel_sync_from_server in ['yes', 'auto']
+        - trusttunnel_sync_from_server == 'yes' or trusttunnel_apply_to_server | bool or not trusttunnel_local_credentials_file.stat.exists
 
     - name: Fetch current server credentials when needed
       ansible.builtin.fetch:
@@ -112,11 +116,13 @@
         group: root
         mode: "0600"
         backup: true
+      when: trusttunnel_apply_to_server | bool
 
     - name: Reload or restart TrustTunnel service
       ansible.builtin.command:
         cmd: systemctl reload-or-restart trusttunnel
       changed_when: true
+      when: trusttunnel_apply_to_server | bool
 
     - name: Verify TrustTunnel service is active after reload/restart
       ansible.builtin.command:
@@ -124,12 +130,14 @@
       register: trusttunnel_service_active_after_reload
       changed_when: false
       failed_when: trusttunnel_service_active_after_reload.rc != 0
+      when: trusttunnel_apply_to_server | bool
 
     - name: Remove generated client configs on server
       ansible.builtin.file:
         path: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
         state: absent
       loop: "{{ trusttunnel_removed_client_usernames }}"
+      when: trusttunnel_apply_to_server | bool
 
     - name: Remove fetched client configs on controller
       ansible.builtin.file:
@@ -138,9 +146,13 @@
       loop: "{{ trusttunnel_removed_client_usernames }}"
       delegate_to: localhost
       become: false
+      when: trusttunnel_apply_to_server | bool
 
     - name: Report removed client operation result
       ansible.builtin.debug:
-        msg:
-          - "Applied credentials file to {{ inventory_hostname }}."
-          - "Removed generated client config files for: {{ trusttunnel_removed_client_usernames | join(', ') }}"
+        msg: >-
+          {{ ['Updated local credentials file: ' ~ trusttunnel_credentials_local_file]
+             + (trusttunnel_apply_to_server | bool
+                | ternary(['Applied credentials file to ' ~ inventory_hostname,
+                           'Removed generated client config files for: ' ~ (trusttunnel_removed_client_usernames | join(', '))],
+                          ['Did not apply changes to server because trusttunnel_apply_to_server=false'])) }}
