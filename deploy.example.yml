@@ -1,0 +1,48 @@
+---
+# Copy this file to deploy.yml and adjust values.
+# Then run:
+#   ./ttctl init --config deploy.yml
+#   ./ttctl deploy
+
+server:
+  host: 203.0.113.10
+  ssh_user: root
+  # Set become: true when ssh_user is not root and the user has sudo rights.
+  become: false
+
+trusttunnel:
+  domain: vpn.example.com
+  public_address: vpn.example.com:443
+  cert_mode: letsencrypt
+  acme_email: admin@example.com
+
+  open_firewall: false
+  firewall_backend: auto
+
+  # To preserve clients from an existing server, set existing_credentials_source.
+  # ttctl will copy it to roles/trusttunnel_endpoint/files/ and set
+  # trusttunnel_existing_credentials_file automatically.
+  # existing_credentials_source: ./credentials.toml
+  # existing_credentials_file: credentials.toml
+
+  clients:
+    - username: user1
+      password: change-me
+
+  # Optional examples:
+  # install_version: "1.0.33"
+  # client_config_format: toml
+  # prune_client_configs: false
+  # generate_client_random_prefix: false
+  # dns_upstreams:
+  #   - 1.1.1.1:53
+  #   - 8.8.8.8:53
+  # rules:
+  #   - cidr: 10.0.0.0/8
+  #     action: deny
+
+# Optional. Prefer Ansible Vault for real secrets.
+# These values are written to vars.yml with mode 600 by ./ttctl init.
+ansible:
+  # password: remote-ssh-password
+  # become_password: sudo-password
