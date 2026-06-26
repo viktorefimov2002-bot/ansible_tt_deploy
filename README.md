@@ -11,9 +11,11 @@ Ansible-проект для быстрой установки и обслужи�
 - переносить существующих VPN-пользователей через `credentials.toml`;
 - добавлять и удалять VPN-клиентов;
 - удалять установленный TrustTunnel с сервера;
-- запускаться как через новый helper `ttctl`, так и через старый интерактивный `bootstrap.sh`.
+- запускаться через новый helper `ttctl` или старый интерактивный `bootstrap.sh`.
 
 ## Самый короткий сценарий
+
+Если SSH уже работает по ключу:
 
 ```bash
 chmod +x ttctl
@@ -21,23 +23,35 @@ cp deploy.example.yml deploy.yml
 nano deploy.yml
 ./ttctl init --config deploy.yml
 ./ttctl deploy
-```
-
-После установки проверить сервис:
-
-```bash
 ./ttctl status
 ```
 
-Если новый `ttctl`-workflow не подходит или не заводится в твоей среде, можно использовать старый интерактивный сценарий:
+Если SSH только по паролю, безопасный вариант через Ansible Vault:
+
+```bash
+chmod +x ttctl
+cp deploy.example.yml deploy.yml
+nano deploy.yml
+./ttctl init --config deploy.yml --ask-ssh-pass
+./ttctl deploy
+./ttctl status
+```
+
+`--ask-ssh-pass` спросит SSH-пароль скрытым вводом, создаст `vault.yml` и сразу зашифрует его через Ansible Vault. Пароль не нужно писать в `deploy.yml`.
+
+Если sudo тоже требует пароль:
+
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+```
+
+Если новый `ttctl`-workflow не подходит, можно использовать старый интерактивный сценарий:
 
 ```bash
 ./bootstrap.sh
 ```
 
 ## Что подготовить заранее
-
-Перед раскаткой желательно иметь:
 
 1. Linux-сервер x86_64 или aarch64.
 2. SSH-доступ к серверу.
@@ -61,16 +75,23 @@ sudo apt-get install -y python3-yaml
 python3 -m pip install PyYAML
 ```
 
-Если YAML-библиотеки нет, `ttctl` остановится с понятной ошибкой. В таком случае можно либо установить зависимость, либо использовать `./bootstrap.sh`.
+Для SSH по паролю обычно также нужен `sshpass`:
+
+```bash
+sudo apt-get install -y sshpass
+```
 
 ## Новый workflow через `ttctl`
 
-`ttctl` — это единая обертка над существующими playbook'ами и helper-скриптами.
+`ttctl` — единая обертка над существующими playbook'ами и helper-скриптами.
 
-Доступные команды:
+Команды:
 
 ```bash
 ./ttctl init --config deploy.yml
+./ttctl init --config deploy.yml --ask-ssh-pass
+./ttctl init --config deploy.yml --ask-become-pass
+./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
 ./ttctl deploy
 ./ttctl status
 ./ttctl add-client
@@ -89,7 +110,7 @@ python3 -m pip install PyYAML
 cp deploy.example.yml deploy.yml
 ```
 
-Файл `deploy.yml` добавлен в `.gitignore`, потому что в нем могут быть реальные адреса, пользователи и секреты.
+`deploy.yml` добавлен в `.gitignore`, потому что в нем могут быть реальные адреса и параметры сервера.
 
 Минимальный пример для сервера, куда ты подключаешься по SSH-ключу под `root`:
 
@@ -114,29 +135,30 @@ trusttunnel:
       password: change-me
 ```
 
-## Откуда Ansible берет пароль для SSH
+Минимально замени:
 
-Ansible не получает пароль от сервера автоматически. Есть два основных варианта.
+- `server.host` — IP или DNS-имя сервера;
+- `server.ssh_user` — SSH-пользователь;
+- `server.become` — `true`, если нужен sudo;
+- `trusttunnel.domain` — домен VPN;
+- `trusttunnel.public_address` — адрес для клиентских конфигов, обычно `domain:443`;
+- `trusttunnel.cert_mode` — обычно `letsencrypt`;
+- `trusttunnel.acme_email` — email для Let's Encrypt;
+- `trusttunnel.clients` — VPN-пользователи.
 
-### Вариант 1. SSH-ключ, пароль в `deploy.yml` не нужен
+## Откуда Ansible берет SSH-пароль
 
-Это предпочтительный вариант.
+Ansible не узнает пароль от сервера автоматически. Есть три сценария.
 
-Если с твоей управляющей машины уже работает команда:
+### 1. SSH-ключ
+
+Если работает:
 
 ```bash
 ssh root@203.0.113.10
 ```
 
-или:
-
-```bash
-ssh ubuntu@203.0.113.10
-```
-
-и сервер пускает тебя по SSH-ключу, то в `deploy.yml` блок `ansible.password` не нужен.
-
-Пример для root-доступа по SSH-ключу:
+и пароль не спрашивается, то в `deploy.yml` пароль не нужен:
 
 ```yaml
 server:
@@ -145,264 +167,92 @@ server:
   become: false
 ```
 
-После `./ttctl init --config deploy.yml` будет создан `inventory.ini` примерно такого вида:
+После `./ttctl init --config deploy.yml` Ansible будет использовать обычный SSH-клиент, ключи из `~/.ssh`, `ssh-agent` и SSH config.
 
-```ini
-[trusttunnel]
-203.0.113.10 ansible_user=root
-```
+### 2. SSH-пароль через Vault — рекомендуемый парольный способ
 
-После этого `./ttctl deploy` запустит Ansible, а Ansible сам использует твой обычный SSH-клиент и доступные SSH-ключи из `~/.ssh/`, `ssh-agent` и стандартной SSH-конфигурации.
-
-### Вариант 2. SSH-пароль, пароль указывается в `deploy.yml`
-
-Если сервер доступен только по паролю, например ты обычно заходишь так:
+Если сервер пускает только по паролю, не пиши пароль в `deploy.yml`. Запусти:
 
 ```bash
-ssh root@203.0.113.10
-# затем руками вводишь пароль
+./ttctl init --config deploy.yml --ask-ssh-pass
 ```
 
-то для `ttctl` можно указать пароль в блоке `ansible`:
+`ttctl`:
+
+1. спросит SSH-пароль скрытым вводом;
+2. спросит пароль для Ansible Vault;
+3. создаст обычный `vars.yml` без SSH-пароля;
+4. создаст `vault.yml` с `ansible_password`;
+5. сразу зашифрует `vault.yml` через `ansible-vault encrypt`.
+
+Дальше:
+
+```bash
+./ttctl deploy
+```
+
+Если рядом есть `vault.yml`, `ttctl deploy` автоматически добавит его в запуск и спросит Vault-пароль через `--ask-vault-pass`.
+
+### 3. SSH-пароль plaintext — только для временного локального теста
+
+Такой вариант остается, но не рекомендуется:
 
 ```yaml
-server:
-  host: 203.0.113.10
-  ssh_user: root
-  become: false
-
 ansible:
   password: remote-ssh-password
 ```
 
-При выполнении:
-
-```bash
-./ttctl init --config deploy.yml
-```
-
-`ttctl` сгенерирует `vars.yml` и положит туда:
+Тогда `ttctl init` запишет в `vars.yml`:
 
 ```yaml
 ansible_password: remote-ssh-password
 ```
 
-Именно из `ansible_password` Ansible возьмет SSH-пароль.
+`vars.yml` имеет права `600`, но это не шифрование.
 
-Важно: для SSH по паролю Ansible обычно требует установленный `sshpass` на управляющей машине.
+## Что такое `become_password`
 
-На Ubuntu/Debian:
+`become_password` — это пароль для sudo, а не SSH-пароль.
+
+Если подключаешься не под root, например:
+
+```yaml
+server:
+  host: 203.0.113.10
+  ssh_user: ubuntu
+  become: true
+```
+
+и sudo требует пароль, используй Vault-backed prompt:
 
 ```bash
-sudo apt-get install -y sshpass
+./ttctl init --config deploy.yml --ask-become-pass
 ```
 
-Если `sshpass` не установлен, Ansible часто падает с ошибкой про password authentication и sshpass.
+Если и SSH, и sudo требуют пароль:
 
-### Что означает `ansible.become_password`
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+```
 
-`become_password` — это не SSH-пароль. Это пароль для `sudo` на удаленном сервере.
-
-Он нужен только если ты подключаешься не под root, а под обычным пользователем, и sudo требует пароль.
-
-Пример:
+В этом случае в зашифрованный `vault.yml` попадут:
 
 ```yaml
-server:
-  host: 203.0.113.10
-  ssh_user: ubuntu
-  become: true
-
-ansible:
-  password: ssh-password-for-ubuntu
-  become_password: sudo-password-for-ubuntu
+ansible_password: <ssh password>
+ansible_become_password: <sudo password>
 ```
-
-После `ttctl init` это превратится в `vars.yml` примерно так:
-
-```yaml
-ansible_password: ssh-password-for-ubuntu
-ansible_become_password: sudo-password-for-ubuntu
-```
-
-Если sudo у пользователя работает без пароля, `become_password` не нужен:
-
-```yaml
-server:
-  host: 203.0.113.10
-  ssh_user: ubuntu
-  become: true
-```
-
-### Почему в примере написано `Prefer Ansible Vault for real secrets`
-
-В `deploy.example.yml` есть блок:
-
-```yaml
-# Optional. Prefer Ansible Vault for real secrets.
-# These values are written to vars.yml with mode 600 by ./ttctl init.
-ansible:
-  # password: remote-ssh-password
-  # become_password: sudo-password
-```
-
-Смысл такой:
-
-- `ansible.password` — SSH-пароль для подключения к серверу;
-- `ansible.become_password` — sudo-пароль на сервере;
-- если раскомментировать эти строки, `ttctl init` запишет их в `vars.yml`;
-- `vars.yml` получает права `600`, то есть читать файл может только владелец;
-- но это все равно обычный текстовый файл, не шифрование.
-
-Поэтому для реальных постоянных секретов безопаснее использовать старый `./bootstrap.sh`, потому что он уже умеет складывать секреты в зашифрованный `vault.yml` через Ansible Vault.
-
-Практическая рекомендация:
-
-- если есть SSH-ключ — используй SSH-ключ и не указывай `ansible.password`;
-- если нужно быстро протестировать парольный доступ — можно временно указать `ansible.password` в `deploy.yml`, но не коммитить этот файл;
-- если нужен постоянный парольный сценарий с секретами — пока лучше использовать `./bootstrap.sh` и Vault.
-
-## Какие поля обязательно заменить
-
-### `server.host`
-
-IP или DNS-имя сервера, на который Ansible будет подключаться по SSH.
-
-```yaml
-server:
-  host: 144.31.109.13
-```
-
-или:
-
-```yaml
-server:
-  host: my-vps.example.com
-```
-
-### `server.ssh_user`
-
-SSH-пользователь для подключения.
-
-Если на сервере разрешен root-login:
-
-```yaml
-server:
-  ssh_user: root
-  become: false
-```
-
-Если подключение идет под обычным пользователем, например `ubuntu`, но у него есть sudo:
-
-```yaml
-server:
-  ssh_user: ubuntu
-  become: true
-```
-
-`become: true` означает, что Ansible будет выполнять задачи через sudo.
-
-### `trusttunnel.domain`
-
-Домен, на который будет выпущен сертификат и который будет использоваться для TLS/SNI.
-
-```yaml
-trusttunnel:
-  domain: vpn.example.com
-```
-
-Для режима `letsencrypt` этот домен должен указывать на IP сервера.
-
-### `trusttunnel.public_address`
-
-Адрес, который попадет в клиентские VPN-конфиги.
-
-Обычно он совпадает с доменом и портом:
-
-```yaml
-trusttunnel:
-  public_address: vpn.example.com:443
-```
-
-Если используется внешний load balancer, NAT или нестандартный внешний порт, здесь нужно указать именно тот адрес, к которому будут подключаться клиенты.
-
-### `trusttunnel.cert_mode`
-
-Режим сертификата.
-
-```yaml
-trusttunnel:
-  cert_mode: letsencrypt
-```
-
-Доступные варианты:
-
-- `letsencrypt` — выпустить настоящий сертификат через Certbot;
-- `selfsigned` — создать самоподписанный сертификат;
-- `existing` — использовать уже существующие сертификат и ключ на сервере.
-
-Для обычной установки на публичный сервер чаще всего нужен `letsencrypt`.
-
-### `trusttunnel.acme_email`
-
-Email для Let's Encrypt:
-
-```yaml
-trusttunnel:
-  acme_email: admin@example.com
-```
-
-Нужен только при:
-
-```yaml
-cert_mode: letsencrypt
-```
-
-### `trusttunnel.clients`
-
-Список VPN-клиентов, которых нужно создать.
-
-Один пользователь:
-
-```yaml
-trusttunnel:
-  clients:
-    - username: user1
-      password: strong-password-here
-```
-
-Несколько пользователей:
-
-```yaml
-trusttunnel:
-  clients:
-    - username: alice
-      password: alice-password
-    - username: bob
-      password: bob-password
-```
-
-Имена пользователей могут содержать латинские буквы, цифры, `_`, `.`, `@` и `-`.
 
 ## Firewall-поля
-
-### `trusttunnel.open_firewall`
 
 ```yaml
 trusttunnel:
   open_firewall: false
+  firewall_backend: auto
 ```
 
-Если `false`, Ansible не будет менять локальный firewall на сервере.
+Если `open_firewall: false`, Ansible не меняет локальный firewall. Это нормально, если firewall выключен, правила уже открыты или порты управляются у облачного провайдера.
 
-Это нормально, если:
-
-- firewall выключен;
-- правила уже открыты;
-- firewall управляется у облачного провайдера;
-- порты открываются через security group/NAT.
-
-Если хочешь, чтобы Ansible попробовал открыть локальные правила через `ufw` или `firewalld`:
+Если нужно открыть локальные правила через `ufw` или `firewalld`:
 
 ```yaml
 trusttunnel:
@@ -416,91 +266,42 @@ trusttunnel:
 - `443/tcp`;
 - `443/udp`.
 
-### `trusttunnel.firewall_backend`
-
-```yaml
-trusttunnel:
-  firewall_backend: auto
-```
-
-Варианты:
-
-- `auto` — сначала искать `ufw`, потом `firewalld`;
-- `ufw`;
-- `firewalld`;
-- `none`.
-
 ## Первый деплой нового сервера
-
-1. Переключись на ветку с P1-изменениями:
 
 ```bash
 git fetch origin
 git checkout p1-usability-safe-cli
-```
-
-2. Сделай helper исполняемым:
-
-```bash
 chmod +x ttctl
-```
-
-Если executable-bit не сохранился, можно запускать так:
-
-```bash
-bash ./ttctl --help
-```
-
-3. Создай локальный конфиг:
-
-```bash
 cp deploy.example.yml deploy.yml
-```
-
-4. Отредактируй `deploy.yml`:
-
-```bash
 nano deploy.yml
 ```
 
-Минимально проверь поля:
-
-- `server.host`;
-- `server.ssh_user`;
-- `server.become`;
-- `ansible.password`, если SSH только по паролю;
-- `ansible.become_password`, если sudo требует пароль;
-- `trusttunnel.domain`;
-- `trusttunnel.public_address`;
-- `trusttunnel.cert_mode`;
-- `trusttunnel.acme_email`;
-- `trusttunnel.clients`.
-
-5. Сгенерируй Ansible runtime-файлы:
+Если SSH по ключу:
 
 ```bash
 ./ttctl init --config deploy.yml
 ```
 
-Команда создаст:
+Если SSH по паролю:
 
-- `inventory.ini`;
-- `vars.yml`;
-- при необходимости скопирует `credentials.toml` в `roles/trusttunnel_endpoint/files/`.
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass
+```
 
-6. Запусти деплой:
+Если обычный пользователь + sudo с паролем:
+
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+```
+
+Затем:
 
 ```bash
 ./ttctl deploy
-```
-
-7. Проверь сервис:
-
-```bash
 ./ttctl status
 ```
 
-8. Клиентские конфиги будут скачаны локально в директорию:
+Клиентские конфиги будут скачаны локально в:
 
 ```text
 client_configs/
@@ -517,32 +318,27 @@ server:
   become: true
 ```
 
-После `ttctl init` в `inventory.ini` будет сгенерировано подключение с:
+Если SSH по ключу и sudo без пароля:
 
-```text
-ansible_user=ubuntu ansible_become=true
+```bash
+./ttctl init --config deploy.yml
 ```
 
-Если sudo требует пароль, добавь:
+Если SSH по паролю, но sudo без пароля:
 
-```yaml
-ansible:
-  become_password: sudo-password-for-ubuntu
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass
 ```
 
-Если SSH тоже по паролю, добавь оба значения:
+Если SSH по паролю и sudo тоже требует пароль:
 
-```yaml
-ansible:
-  password: ssh-password-for-ubuntu
-  become_password: sudo-password-for-ubuntu
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
 ```
-
-Для долгосрочного хранения таких секретов лучше использовать `./bootstrap.sh` с Ansible Vault.
 
 ## Миграция существующих VPN-клиентов
 
-Если у тебя уже есть старый сервер TrustTunnel и нужно сохранить пользователей, возьми с него файл:
+Если нужно сохранить пользователей со старого сервера, забери `credentials.toml`:
 
 ```bash
 scp root@OLD_SERVER:/opt/trusttunnel/credentials.toml ./credentials.toml
@@ -581,28 +377,6 @@ roles/trusttunnel_endpoint/files/credentials.toml
 /opt/trusttunnel/credentials.toml
 ```
 
-Пароли пользователей сохранятся из исходного файла.
-
-Также можно импортировать credentials отдельно:
-
-```bash
-./ttctl import-credentials ./credentials.toml
-```
-
-После этого в `vars.yml` или `deploy.yml` нужно использовать:
-
-```yaml
-trusttunnel_existing_credentials_file: credentials.toml
-```
-
-или в `deploy.yml`:
-
-```yaml
-trusttunnel:
-  existing_credentials_file: credentials.toml
-  clients: []
-```
-
 ## Добавление VPN-клиентов после установки
 
 Подготовь файл:
@@ -617,24 +391,12 @@ roles/trusttunnel_endpoint/files/new_clients.toml
 [[client]]
 username = "alice"
 password = "alice-password"
-
-[[client]]
-username = "bob"
-password = "bob-password"
 ```
 
 Запусти:
 
 ```bash
 ./ttctl add-client
-```
-
-Эта команда вызывает существующий helper `add_vpn_clients.sh`.
-
-Если текущего локального `credentials.toml` еще нет, сначала забери его с сервера:
-
-```bash
-scp root@SERVER:/opt/trusttunnel/credentials.toml roles/trusttunnel_endpoint/files/credentials.toml
 ```
 
 ## Удаление VPN-клиентов
@@ -658,11 +420,7 @@ bob
 ./ttctl remove-client
 ```
 
-Эта команда вызывает существующий helper `remove_vpn_clients.sh`.
-
 ## Проверка установленного сервиса
-
-Через helper:
 
 ```bash
 ./ttctl status
@@ -675,17 +433,6 @@ sudo systemctl status trusttunnel
 sudo journalctl -u trusttunnel -f
 ```
 
-Файлы на сервере:
-
-```text
-/opt/trusttunnel/trusttunnel_endpoint
-/opt/trusttunnel/vpn.toml
-/opt/trusttunnel/hosts.toml
-/opt/trusttunnel/credentials.toml
-/opt/trusttunnel/rules.toml
-/etc/systemd/system/trusttunnel.service
-```
-
 ## Повторный деплой
 
 После изменения `deploy.yml`:
@@ -693,6 +440,12 @@ sudo journalctl -u trusttunnel -f
 ```bash
 ./ttctl init --config deploy.yml
 ./ttctl deploy
+```
+
+Если используешь парольный доступ, повтори нужный Vault-флаг:
+
+```bash
+./ttctl init --config deploy.yml --ask-ssh-pass
 ```
 
 Если меняешь только Ansible-переменные в `vars.yml`, можно сразу:
@@ -703,22 +456,9 @@ sudo journalctl -u trusttunnel -f
 
 ## Удаление TrustTunnel с сервера
 
-Через helper:
-
 ```bash
 ./ttctl uninstall
 ```
-
-По умолчанию uninstall:
-
-- останавливает и отключает `trusttunnel.service`;
-- удаляет systemd unit;
-- удаляет `/opt/trusttunnel`;
-- удаляет deploy hook Certbot;
-- удаляет cron fallback для Certbot, если он создавался;
-- удаляет локально скачанные клиентские конфиги из `client_configs`.
-
-Let's Encrypt-сертификат и firewall-правила по умолчанию не удаляются.
 
 Для полного тестового удаления:
 
@@ -730,12 +470,7 @@ Let's Encrypt-сертификат и firewall-правила по умолча�
 
 ## Откат изменений этой ветки
 
-Эти P1-изменения сделаны безопасно и добавлены отдельной веткой.
-
 Если PR еще не влит:
-
-- просто не мержить PR;
-- перейти обратно на `main`:
 
 ```bash
 git checkout main
@@ -757,61 +492,19 @@ docs/ROLLBACK.md
 
 ## Старый интерактивный способ через `bootstrap.sh`
 
-Старый способ сохранен.
+Старый способ сохранен:
 
 ```bash
 ./bootstrap.sh
 ```
 
-Он интерактивно спросит:
+Он полезен, если:
 
-- установлен ли Ansible;
-- адрес сервера;
-- SSH-метод: пароль или ключ;
-- домен;
-- режим сертификата;
-- email Let's Encrypt;
-- использовать ли существующий `credentials.toml`;
-- пользователя и пароль VPN-клиента;
-- открывать ли firewall;
-- шифровать ли секреты через Ansible Vault.
-
-Этот способ полезен, если:
-
-- нужен Ansible Vault для секретов;
-- нужен SSH по паролю без ручной настройки `deploy.yml`;
+- хочется полностью интерактивный сценарий;
 - не хочется руками заполнять `deploy.yml`;
 - новый `ttctl` workflow пока не подходит.
 
-## Важные Ansible-переменные
-
-Ниже основные переменные, которые можно задавать через `vars.yml` или генерировать через `deploy.yml`.
-
-- `ansible_password` — SSH-пароль для подключения к серверу, если не используется SSH-ключ.
-- `ansible_become_password` — sudo-пароль на сервере, если `become: true` и sudo требует пароль.
-- `trusttunnel_domain` — домен TrustTunnel endpoint.
-- `trusttunnel_public_address` — адрес для клиентских конфигов.
-- `trusttunnel_cert_mode` — `letsencrypt`, `selfsigned` или `existing`.
-- `trusttunnel_acme_email` — email для Let's Encrypt.
-- `trusttunnel_existing_cert_chain_path` — путь к существующему fullchain при `cert_mode: existing`.
-- `trusttunnel_existing_private_key_path` — путь к существующему private key при `cert_mode: existing`.
-- `trusttunnel_open_firewall` — открывать локальные firewall-порты средствами Ansible.
-- `trusttunnel_firewall_backend` — `auto`, `ufw`, `firewalld` или `none`.
-- `trusttunnel_clients` — список VPN-клиентов.
-- `trusttunnel_existing_credentials_file` — имя готового credentials-файла из `roles/trusttunnel_endpoint/files/`.
-- `trusttunnel_install_version` — версия TrustTunnel release, например `1.0.33`; по умолчанию `auto`.
-- `trusttunnel_client_config_format` — `toml` или `deeplink`.
-- `trusttunnel_fetch_client_configs` — скачивать клиентские конфиги локально.
-- `trusttunnel_client_config_local_dir` — куда сохранять клиентские конфиги локально.
-- `trusttunnel_prune_client_configs` — удалять stale клиентские конфиги.
-- `trusttunnel_generate_client_random_prefix` — генерировать TLS random prefix.
-- `trusttunnel_remove_install_dir` — удалять `/opt/trusttunnel` при uninstall.
-- `trusttunnel_remove_letsencrypt_cert` — удалять Let's Encrypt сертификат при uninstall.
-- `trusttunnel_close_firewall` — убирать firewall-правила при uninstall.
-
-## Что появится локально после запуска
-
-Файлы, которые создаются локально и не должны попадать в git:
+## Локальные файлы, которые не должны попадать в git
 
 ```text
 inventory.ini
