@@ -13,12 +13,67 @@ Ansible-проект для быстрой установки и обслужи�
 - удалять установленный TrustTunnel с сервера;
 - запускаться через helper `ttctl` или старый интерактивный `bootstrap.sh`.
 
+## 0. Установка зависимостей на управляющей машине
+
+Перед `./ttctl init`, `./ttctl deploy`, `./ttctl add-client` и `./ttctl remove-client` нужно подготовить управляющую машину: локальный Linux/WSL, admin VM или CI runner, откуда запускается Ansible.
+
+Минимально нужны:
+
+- `python3`;
+- `ansible`;
+- `ansible-playbook`;
+- Python-модуль `yaml`, то есть `PyYAML` или distro-пакет `python3-yaml`;
+- `sshpass`, если подключение к серверу идет по SSH-паролю, а не по SSH-ключу.
+
+Проверить зависимости без установки:
+
+```bash
+chmod +x scripts/install_requirements.sh scripts/uninstall_requirements.sh
+./scripts/install_requirements.sh --check-only
+```
+
+Установить недостающие зависимости интерактивно:
+
+```bash
+./scripts/install_requirements.sh
+```
+
+Установить без вопросов:
+
+```bash
+./scripts/install_requirements.sh --yes
+```
+
+Если хочешь поставить Python-зависимости в virtualenv:
+
+```bash
+./scripts/install_requirements.sh --venv
+source .venv/bin/activate
+```
+
+`requirements.txt` содержит только Python-зависимости проекта:
+
+```text
+PyYAML>=6.0
+```
+
+`python3`, `ansible`, `ansible-playbook` и `sshpass` устанавливаются через пакетный менеджер ОС, а не через `requirements.txt`.
+
+Для безопасного удаления вспомогательных зависимостей есть отдельный скрипт:
+
+```bash
+./scripts/uninstall_requirements.sh
+```
+
+Он спрашивает отдельно про каждый компонент и не удаляет `python3` автоматически, потому что Python часто нужен системе и другим инструментам. Подробнее: `docs/DEPENDENCIES.md`.
+
 ## Самый короткий сценарий
 
 Если SSH уже работает по ключу:
 
 ```bash
-chmod +x ttctl
+chmod +x scripts/install_requirements.sh scripts/uninstall_requirements.sh ttctl
+./scripts/install_requirements.sh --check-only || ./scripts/install_requirements.sh
 cp deploy.example.yml deploy.yml
 nano deploy.yml
 ./ttctl init --config deploy.yml
@@ -29,7 +84,8 @@ nano deploy.yml
 Если SSH только по паролю, безопасный вариант через Ansible Vault:
 
 ```bash
-chmod +x ttctl
+chmod +x scripts/install_requirements.sh scripts/uninstall_requirements.sh ttctl
+./scripts/install_requirements.sh --check-only || ./scripts/install_requirements.sh
 cp deploy.example.yml deploy.yml
 nano deploy.yml
 ./ttctl init --config deploy.yml --ask-ssh-pass
@@ -56,24 +112,7 @@ nano deploy.yml
    - `80/tcp` для Let's Encrypt HTTP challenge;
    - `443/tcp` для TrustTunnel;
    - `443/udp` для TrustTunnel, если используется UDP.
-7. Ansible на управляющей машине.
-8. Python с YAML-библиотекой для `ttctl init`:
-
-```bash
-sudo apt-get install -y python3-yaml
-```
-
-или:
-
-```bash
-python3 -m pip install PyYAML
-```
-
-Для SSH по паролю обычно также нужен `sshpass`:
-
-```bash
-sudo apt-get install -y sshpass
-```
+7. Подготовленную управляющую машину с зависимостями из раздела `0. Установка зависимостей на управляющей машине`.
 
 ## Команды `ttctl`
 
@@ -270,7 +309,8 @@ trusttunnel:
 ```bash
 git fetch origin
 git checkout p1-usability-safe-cli
-chmod +x ttctl
+chmod +x scripts/install_requirements.sh scripts/uninstall_requirements.sh ttctl
+./scripts/install_requirements.sh --check-only || ./scripts/install_requirements.sh
 cp deploy.example.yml deploy.yml
 nano deploy.yml
 ```
@@ -459,6 +499,22 @@ sudo journalctl -u trusttunnel -f
   -e trusttunnel_remove_letsencrypt_cert=true \
   -e trusttunnel_close_firewall=true
 ```
+
+## Удаление зависимостей с управляющей машины
+
+Если нужно убрать вспомогательные пакеты с управляющей машины, используй безопасный helper:
+
+```bash
+./scripts/uninstall_requirements.sh
+```
+
+Он спрашивает отдельно про каждый компонент. Для предварительного просмотра:
+
+```bash
+./scripts/uninstall_requirements.sh --dry-run
+```
+
+Не удаляй `ansible`, `sshpass`, `python3-pip` или `PyYAML`, если они нужны другим проектам. `python3` скрипт не удаляет автоматически.
 
 ## Откат изменений этой ветки
 
