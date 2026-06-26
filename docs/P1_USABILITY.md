@@ -4,6 +4,20 @@ This document describes the safer P1 workflow added on top of the existing deplo
 
 The existing `bootstrap.sh`, `site.yml`, `uninstall.yml`, Ansible role and generated `deploy.sh`/`uninstall.sh` flow are still supported. The new `ttctl` helper is an optional wrapper intended to reduce repeated manual actions.
 
+## Prepare helper
+
+After pulling this branch, make the helper executable if your checkout did not preserve the executable bit:
+
+```bash
+chmod +x ttctl
+```
+
+You can also run it explicitly through Bash:
+
+```bash
+bash ./ttctl --help
+```
+
 ## One-file deployment
 
 Copy the example config:
