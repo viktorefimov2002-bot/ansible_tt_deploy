@@ -1,0 +1,138 @@
+---
+- name: Add TrustTunnel VPN clients after installation
+  hosts: trusttunnel
+  become: true
+  gather_facts: false
+
+  vars:
+    trusttunnel_install_dir: /opt/trusttunnel
+    trusttunnel_credentials_remote_file: "{{ trusttunnel_install_dir }}/credentials.toml"
+    trusttunnel_credentials_local_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/credentials.toml"
+    trusttunnel_new_clients_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/new_clients.toml"
+    trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
+    trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
+
+  pre_tasks:
+    - name: Check local credentials file exists
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_credentials_local_file }}"
+      register: trusttunnel_local_credentials_file
+      delegate_to: localhost
+      become: false
+
+    - name: Validate local credentials file
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_local_credentials_file.stat.exists
+        fail_msg: "Local credentials file does not exist: {{ trusttunnel_credentials_local_file }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Check local new clients file exists
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_new_clients_file }}"
+      register: trusttunnel_local_new_clients_file
+      delegate_to: localhost
+      become: false
+
+    - name: Validate local new clients file
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_local_new_clients_file.stat.exists
+        fail_msg: "Local new clients file does not exist: {{ trusttunnel_new_clients_file }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Parse usernames from new clients file
+      ansible.builtin.set_fact:
+        trusttunnel_added_client_usernames: >-
+          {{ lookup('ansible.builtin.file', trusttunnel_new_clients_file)
+             | regex_findall('(?m)^\s*username\s*=\s*["' ~ "'" ~ ']([^"' ~ "'" ~ ']+)["' ~ "'" ~ ']')
+             | unique
+             | list }}
+      delegate_to: localhost
+      become: false
+
+    - name: Validate parsed usernames
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_added_client_usernames | length > 0
+          - item is match('^[A-Za-z0-9_.@-]+$')
+        fail_msg: "Invalid or empty username in {{ trusttunnel_new_clients_file }}: {{ item | default('') }}"
+      loop: "{{ trusttunnel_added_client_usernames | default([]) }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Validate public client address
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_public_address | default('') | length > 0
+        fail_msg: "trusttunnel_public_address is empty. Run ./ttctl init --config deploy.yml first."
+      delegate_to: localhost
+      become: false
+
+  tasks:
+    - name: Check TrustTunnel service is active
+      ansible.builtin.command:
+        cmd: systemctl is-active trusttunnel
+      register: trusttunnel_service_active
+      changed_when: false
+      failed_when: trusttunnel_service_active.rc != 0
+
+    - name: Upload updated credentials file
+      ansible.builtin.copy:
+        src: "{{ trusttunnel_credentials_local_file }}"
+        dest: "{{ trusttunnel_credentials_remote_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        backup: true
+
+    - name: Reload or restart TrustTunnel service
+      ansible.builtin.command:
+        cmd: systemctl reload-or-restart trusttunnel
+      changed_when: true
+
+    - name: Verify TrustTunnel service is active after reload/restart
+      ansible.builtin.command:
+        cmd: systemctl is-active trusttunnel
+      register: trusttunnel_service_active_after_reload
+      changed_when: false
+      failed_when: trusttunnel_service_active_after_reload.rc != 0
+
+    - name: Ensure local client config directory exists
+      ansible.builtin.file:
+        path: "{{ trusttunnel_client_config_local_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Generate client configs for added users
+      ansible.builtin.shell: >-
+        set -eu;
+        cd {{ trusttunnel_install_dir | quote }};
+        ./trusttunnel_endpoint vpn.toml hosts.toml
+        -c {{ item | quote }}
+        -a {{ trusttunnel_public_address | quote }}
+        --format {{ trusttunnel_client_config_format | quote }}
+        {% for upstream in trusttunnel_dns_upstreams %} --dns-upstream {{ upstream | quote }}{% endfor %}
+        > {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_client_config_format) | quote }};
+        chmod 600 {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_client_config_format) | quote }}
+      args:
+        executable: /bin/bash
+      loop: "{{ trusttunnel_added_client_usernames }}"
+
+    - name: Fetch generated client configs
+      ansible.builtin.fetch:
+        src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
+        dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
+        flat: true
+      loop: "{{ trusttunnel_added_client_usernames }}"
+
+    - name: Report added client operation result
+      ansible.builtin.debug:
+        msg:
+          - "Applied credentials file to {{ inventory_hostname }}."
+          - "Generated and fetched client configs for: {{ trusttunnel_added_client_usernames | join(', ') }}"
