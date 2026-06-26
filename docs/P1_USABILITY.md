@@ -136,7 +136,7 @@ It does the following:
 3. skips duplicate usernames;
 4. checks that `trusttunnel.service` is active;
 5. uploads the updated credentials file back to `/opt/trusttunnel/credentials.toml`;
-6. runs `systemctl reload-or-restart trusttunnel`;
+6. runs `systemctl restart trusttunnel` because TrustTunnel rereads `credentials.toml` only after process restart;
 7. verifies that the service is still active;
 8. generates and fetches client configs to `client_configs/`.
 
@@ -182,7 +182,7 @@ It does the following:
 2. removes requested usernames from the local credentials file;
 3. checks that `trusttunnel.service` is active;
 4. uploads the updated credentials file back to `/opt/trusttunnel/credentials.toml`;
-5. runs `systemctl reload-or-restart trusttunnel`;
+5. runs `systemctl restart trusttunnel` because TrustTunnel rereads `credentials.toml` only after process restart;
 6. verifies that the service is still active;
 7. removes generated client config files for those users on the server and locally.
 
