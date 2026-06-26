@@ -10,7 +10,7 @@
     trusttunnel_credentials_local_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/credentials.toml"
     trusttunnel_remove_clients_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/remove_clients.txt"
     trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
-    trusttunnel_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_effective_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
     trusttunnel_sync_from_server: auto
     trusttunnel_apply_to_server: true
 
@@ -134,14 +134,14 @@
 
     - name: Remove generated client configs on server
       ansible.builtin.file:
-        path: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_client_config_format }}"
+        path: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         state: absent
       loop: "{{ trusttunnel_removed_client_usernames }}"
       when: trusttunnel_apply_to_server | bool
 
     - name: Remove fetched client configs on controller
       ansible.builtin.file:
-        path: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_client_config_format }}"
+        path: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         state: absent
       loop: "{{ trusttunnel_removed_client_usernames }}"
       delegate_to: localhost
