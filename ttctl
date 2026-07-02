@@ -17,7 +17,7 @@ usage() {
 Usage:
   ./ttctl init [--config deploy.yml] [--vault] [--ask-ssh-pass] [--ask-become-pass]
   ./ttctl deploy [extra ansible-playbook args...]
-  ./ttctl status
+  ./ttctl status [--short|--json|--logs|--clients] [--log-lines N]
   ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [new_clients.toml] [credentials.toml]
   ./ttctl remove-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [remove_clients.txt] [credentials.toml]
   ./ttctl import-credentials <credentials.toml>
@@ -29,12 +29,18 @@ Commands:
                        Use --ask-ssh-pass to prompt for the SSH password.
                        Use --ask-become-pass to prompt for the sudo/become password.
   deploy               Run the full install/update playbook.
-  status               Check remote systemd status for the TrustTunnel service.
+  status               Show TrustTunnel diagnostics using status.yml.
+                       Default output is human-readable.
+                       --short shows a one-line summary.
+                       --json shows a machine-readable Ansible dict.
+                       --logs shows recent journalctl lines.
+                       --clients shows credentials/client config drift.
+                       --log-lines N controls how many journal lines are checked.
   add-client           Run add_clients.yml. The playbook can fetch credentials,
-                       update them locally, upload them, reload/restart TrustTunnel,
-                       generate client configs, and fetch them locally.
+                       update them locally, upload them, restart TrustTunnel,
+                       generate missing client configs, and fetch them locally.
   remove-client        Run remove_clients.yml. The playbook can fetch credentials,
-                       update them locally, upload them, reload/restart TrustTunnel,
+                       update them locally, upload them, restart TrustTunnel,
                        and remove generated client config files.
                        --sync-from-server forces a refresh before editing.
                        --no-sync-from-server disables automatic fetch.
@@ -215,7 +221,7 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    print("Error: Python package 'yaml' was not found. Install python3-yaml or PyYAML, or use ./bootstrap.sh.", file=sys.stderr)
+    print("Error: Python package 'yaml' was not found. Install python3-yaml or PyYAML, or use ./scripts/install_requirements.sh.", file=sys.stderr)
     sys.exit(1)
 
 config_path = Path(os.environ["CONFIG_FILE"])
@@ -369,15 +375,49 @@ uninstall() {
 }
 
 status() {
-  require_file "$INVENTORY_FILE"
-  require_file "$VARS_FILE"
+  status_mode="human"
+  log_lines="50"
 
-  if [ -f "$VAULT_FILE" ]; then
-    ensure_vault_password_file
-    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --vault-password-file "$VAULT_PASSWORD_FILE" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
-  else
-    ansible trusttunnel -i "$INVENTORY_FILE" -e "@${VARS_FILE}" -b -m ansible.builtin.shell -a 'systemctl is-active trusttunnel && systemctl status trusttunnel --no-pager -l | sed -n "1,20p"'
-  fi
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --short)
+        status_mode="short"
+        shift
+        ;;
+      --json)
+        status_mode="json"
+        shift
+        ;;
+      --logs)
+        status_mode="logs"
+        shift
+        ;;
+      --clients)
+        status_mode="clients"
+        shift
+        ;;
+      --log-lines)
+        [ "$#" -ge 2 ] || fail "--log-lines requires a number"
+        log_lines="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "unknown status argument: $1"
+        ;;
+    esac
+  done
+
+  case "$log_lines" in
+    ''|*[!0-9]*) fail "--log-lines must be a positive integer" ;;
+  esac
+
+  run_playbook status.yml \
+    -e "trusttunnel_status_mode=${status_mode}" \
+    -e "trusttunnel_status_log_lines=${log_lines}"
 }
 
 resolve_client_operation_args() {
@@ -496,8 +536,7 @@ case "$cmd" in
     ;;
   status)
     shift
-    [ "$#" -eq 0 ] || fail "status does not accept arguments"
-    status
+    status "$@"
     ;;
   add-client)
     shift
