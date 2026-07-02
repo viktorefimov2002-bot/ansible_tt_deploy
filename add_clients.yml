@@ -131,8 +131,8 @@
           {{ trusttunnel_local_client_config_files.files | default([])
              | map(attribute='path')
              | map('basename')
-             | map('regex_replace', '^' ~ inventory_hostname ~ '_client_', '')
-             | map('regex_replace', '\\.' ~ trusttunnel_effective_client_config_format ~ '$', '')
+             | map('regex_replace', '^' ~ (inventory_hostname | regex_escape) ~ '_client_', '')
+             | map('regex_replace', '\\.' ~ (trusttunnel_effective_client_config_format | regex_escape) ~ '$', '')
              | unique
              | list }}
       delegate_to: localhost
