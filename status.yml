@@ -1,0 +1,312 @@
+---
+- name: Show TrustTunnel status
+  hosts: trusttunnel
+  become: true
+  gather_facts: false
+
+  vars:
+    trusttunnel_status_mode: human
+    trusttunnel_status_log_lines: 50
+    trusttunnel_status_cert_warning_days: 14
+    trusttunnel_status_service_name: "{{ trusttunnel_service_name | default('trusttunnel') }}"
+    trusttunnel_status_install_dir: "{{ trusttunnel_install_dir | default('/opt/trusttunnel') }}"
+    trusttunnel_status_credentials_file: "{{ trusttunnel_status_install_dir }}/credentials.toml"
+    trusttunnel_status_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_status_client_config_local_dir: "{{ trusttunnel_client_config_local_dir | default(playbook_dir ~ '/client_configs') }}"
+    trusttunnel_status_domain: "{{ trusttunnel_domain | default('') }}"
+    trusttunnel_status_listen_address: "{{ trusttunnel_listen_address | default('0.0.0.0:443') }}"
+    trusttunnel_status_port: "{{ trusttunnel_status_listen_address | regex_replace('^.*:', '') }}"
+
+  pre_tasks:
+    - name: Validate status mode
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_status_mode in ['human', 'short', 'json', 'logs', 'clients']
+        fail_msg: "Unsupported status mode: {{ trusttunnel_status_mode }}"
+      delegate_to: localhost
+      become: false
+
+  tasks:
+    - name: Check service active state
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ trusttunnel_status_service_name }}"
+      register: trusttunnel_status_service_active
+      changed_when: false
+      failed_when: false
+
+    - name: Check service enabled state
+      ansible.builtin.command:
+        cmd: "systemctl is-enabled {{ trusttunnel_status_service_name }}"
+      register: trusttunnel_status_service_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Read service properties
+      ansible.builtin.command:
+        cmd: >-
+          systemctl show {{ trusttunnel_status_service_name }}
+          -p ActiveState
+          -p SubState
+          -p MainPID
+          -p NRestarts
+          -p ActiveEnterTimestamp
+          -p ExecMainStatus
+          -p MemoryCurrent
+          --no-pager
+      register: trusttunnel_status_service_show
+      changed_when: false
+      failed_when: false
+
+    - name: Check TCP listener
+      ansible.builtin.shell: >-
+        ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:){{ trusttunnel_status_port }}$'
+      register: trusttunnel_status_tcp_listener
+      changed_when: false
+      failed_when: false
+
+    - name: Check UDP listener
+      ansible.builtin.shell: >-
+        ss -lnu 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:){{ trusttunnel_status_port }}$'
+      register: trusttunnel_status_udp_listener
+      changed_when: false
+      failed_when: false
+
+    - name: Check install directory
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_status_install_dir }}"
+      register: trusttunnel_status_install_dir_stat
+
+    - name: Check credentials file
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_status_credentials_file }}"
+      register: trusttunnel_status_credentials_stat
+
+    - name: Count users in credentials file
+      ansible.builtin.shell: >-
+        awk -F= '/^[[:space:]]*username[[:space:]]*=/{count++} END{print count+0}'
+        {{ trusttunnel_status_credentials_file | quote }}
+      register: trusttunnel_status_credentials_user_count
+      changed_when: false
+      failed_when: false
+      when: trusttunnel_status_credentials_stat.stat.exists
+
+    - name: List users in credentials file
+      ansible.builtin.shell: >-
+        awk -F= '/^[[:space:]]*username[[:space:]]*=/ {
+          value=$0;
+          sub(/^[^=]*=[[:space:]]*/, "", value);
+          gsub(/^[[:space:]]*["'"'"']|["'"'"'][[:space:]]*$/, "", value);
+          print value;
+        }' {{ trusttunnel_status_credentials_file | quote }}
+      register: trusttunnel_status_credentials_users
+      changed_when: false
+      failed_when: false
+      when: trusttunnel_status_credentials_stat.stat.exists
+      no_log: true
+
+    - name: Find server client configs
+      ansible.builtin.find:
+        paths: "{{ trusttunnel_status_install_dir }}"
+        patterns: "client_*.{{ trusttunnel_status_client_config_format }}"
+        file_type: file
+      register: trusttunnel_status_server_client_configs
+      when: trusttunnel_status_install_dir_stat.stat.exists
+
+    - name: Find local fetched client configs
+      ansible.builtin.find:
+        paths: "{{ trusttunnel_status_client_config_local_dir }}"
+        patterns: "{{ inventory_hostname }}_client_*.{{ trusttunnel_status_client_config_format }}"
+        file_type: file
+      register: trusttunnel_status_local_client_configs
+      delegate_to: localhost
+      become: false
+
+    - name: Parse server client config usernames
+      ansible.builtin.set_fact:
+        trusttunnel_status_server_config_usernames: >-
+          {{ trusttunnel_status_server_client_configs.files | default([])
+             | map(attribute='path')
+             | map('basename')
+             | map('regex_replace', '^client_', '')
+             | map('regex_replace', '\\.' ~ (trusttunnel_status_client_config_format | regex_escape) ~ '$', '')
+             | unique
+             | list }}
+        trusttunnel_status_local_config_usernames: >-
+          {{ trusttunnel_status_local_client_configs.files | default([])
+             | map(attribute='path')
+             | map('basename')
+             | map('regex_replace', '^' ~ (inventory_hostname | regex_escape) ~ '_client_', '')
+             | map('regex_replace', '\\.' ~ (trusttunnel_status_client_config_format | regex_escape) ~ '$', '')
+             | unique
+             | list }}
+
+    - name: Build client config drift facts
+      ansible.builtin.set_fact:
+        trusttunnel_status_credential_usernames: "{{ trusttunnel_status_credentials_users.stdout_lines | default([]) }}"
+        trusttunnel_status_missing_server_configs: >-
+          {{ (trusttunnel_status_credentials_users.stdout_lines | default([])) | difference(trusttunnel_status_server_config_usernames | default([])) }}
+        trusttunnel_status_missing_local_configs: >-
+          {{ (trusttunnel_status_credentials_users.stdout_lines | default([])) | difference(trusttunnel_status_local_config_usernames | default([])) }}
+
+    - name: Check Let's Encrypt certificate file
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ trusttunnel_status_domain }}/fullchain.pem"
+      register: trusttunnel_status_cert_stat
+      when: trusttunnel_status_domain | length > 0
+
+    - name: Read certificate expiry
+      ansible.builtin.command:
+        cmd: "openssl x509 -in /etc/letsencrypt/live/{{ trusttunnel_status_domain }}/fullchain.pem -noout -enddate"
+      register: trusttunnel_status_cert_enddate
+      changed_when: false
+      failed_when: false
+      when:
+        - trusttunnel_status_domain | length > 0
+        - trusttunnel_status_cert_stat.stat.exists | default(false)
+
+    - name: Check certificate warning threshold
+      ansible.builtin.command:
+        cmd: "openssl x509 -in /etc/letsencrypt/live/{{ trusttunnel_status_domain }}/fullchain.pem -checkend {{ trusttunnel_status_cert_warning_days | int * 86400 }} -noout"
+      register: trusttunnel_status_cert_checkend
+      changed_when: false
+      failed_when: false
+      when:
+        - trusttunnel_status_domain | length > 0
+        - trusttunnel_status_cert_stat.stat.exists | default(false)
+
+    - name: Read recent service logs
+      ansible.builtin.command:
+        cmd: "journalctl -u {{ trusttunnel_status_service_name }} -n {{ trusttunnel_status_log_lines | int }} --no-pager"
+      register: trusttunnel_status_recent_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Count warning/error log lines
+      ansible.builtin.shell: >-
+        journalctl -u {{ trusttunnel_status_service_name }} -n {{ trusttunnel_status_log_lines | int }} --no-pager
+        | grep -Eic 'error|failed|panic|fatal|critical|warn'
+      register: trusttunnel_status_error_log_count
+      changed_when: false
+      failed_when: false
+
+    - name: Build status problem list
+      ansible.builtin.set_fact:
+        trusttunnel_status_problems: >-
+          {{ []
+             + ((trusttunnel_status_service_active.stdout | default('')) == 'active' | ternary([], ['service is not active: ' ~ (trusttunnel_status_service_active.stdout | default('unknown'))]))
+             + ((trusttunnel_status_tcp_listener.rc | default(1)) == 0 | ternary([], ['TCP ' ~ trusttunnel_status_port ~ ' is not listening']))
+             + ((trusttunnel_status_udp_listener.rc | default(1)) == 0 | ternary([], ['UDP ' ~ trusttunnel_status_port ~ ' is not listening']))
+             + ((trusttunnel_status_credentials_stat.stat.exists | default(false)) | ternary([], ['credentials.toml is missing']))
+             + (((trusttunnel_status_credentials_user_count.stdout | default('0') | int) > 0) | ternary([], ['credentials.toml has no users or could not be parsed']))
+             + (((trusttunnel_status_missing_server_configs | length) == 0) | ternary([], ['missing server client configs: ' ~ (trusttunnel_status_missing_server_configs | join(', '))]))
+             + (((trusttunnel_status_cert_checkend is skipped) or (trusttunnel_status_cert_checkend.rc | default(0) == 0)) | ternary([], ['certificate expires within ' ~ (trusttunnel_status_cert_warning_days | string) ~ ' days'])) }}
+        trusttunnel_status_overall: >-
+          {{ ((trusttunnel_status_service_active.stdout | default('')) == 'active'
+              and (trusttunnel_status_tcp_listener.rc | default(1)) == 0
+              and (trusttunnel_status_udp_listener.rc | default(1)) == 0
+              and (trusttunnel_status_credentials_stat.stat.exists | default(false))
+              and ((trusttunnel_status_credentials_user_count.stdout | default('0') | int) > 0)
+             | ternary('OK', 'FAIL') }}
+
+    - name: Show short status
+      ansible.builtin.debug:
+        msg: >-
+          {{ trusttunnel_status_overall }}: service={{ trusttunnel_status_service_active.stdout | default('unknown') }},
+          tcp/{{ trusttunnel_status_port }}={{ ((trusttunnel_status_tcp_listener.rc | default(1)) == 0) | ternary('listening', 'missing') }},
+          udp/{{ trusttunnel_status_port }}={{ ((trusttunnel_status_udp_listener.rc | default(1)) == 0) | ternary('listening', 'missing') }},
+          users={{ trusttunnel_status_credentials_user_count.stdout | default('0') }},
+          server_configs={{ trusttunnel_status_server_client_configs.matched | default(0) }},
+          local_configs={{ trusttunnel_status_local_client_configs.matched | default(0) }},
+          missing_local={{ trusttunnel_status_missing_local_configs | length }}
+      when: trusttunnel_status_mode == 'short'
+
+    - name: Show JSON status
+      ansible.builtin.debug:
+        msg:
+          overall: "{{ trusttunnel_status_overall }}"
+          host: "{{ inventory_hostname }}"
+          service:
+            name: "{{ trusttunnel_status_service_name }}"
+            active: "{{ trusttunnel_status_service_active.stdout | default('unknown') }}"
+            enabled: "{{ trusttunnel_status_service_enabled.stdout | default('unknown') }}"
+          network:
+            port: "{{ trusttunnel_status_port }}"
+            tcp_listening: "{{ (trusttunnel_status_tcp_listener.rc | default(1)) == 0 }}"
+            udp_listening: "{{ (trusttunnel_status_udp_listener.rc | default(1)) == 0 }}"
+          credentials:
+            path: "{{ trusttunnel_status_credentials_file }}"
+            exists: "{{ trusttunnel_status_credentials_stat.stat.exists | default(false) }}"
+            users: "{{ trusttunnel_status_credentials_user_count.stdout | default('0') | int }}"
+          client_configs:
+            server_count: "{{ trusttunnel_status_server_client_configs.matched | default(0) }}"
+            local_count: "{{ trusttunnel_status_local_client_configs.matched | default(0) }}"
+            missing_server: "{{ trusttunnel_status_missing_server_configs }}"
+            missing_local: "{{ trusttunnel_status_missing_local_configs }}"
+          certificate:
+            domain: "{{ trusttunnel_status_domain }}"
+            exists: "{{ trusttunnel_status_cert_stat.stat.exists | default(false) }}"
+            enddate: "{{ trusttunnel_status_cert_enddate.stdout | default('') }}"
+            warning_days: "{{ trusttunnel_status_cert_warning_days }}"
+          logs:
+            checked_lines: "{{ trusttunnel_status_log_lines }}"
+            warnings_or_errors: "{{ trusttunnel_status_error_log_count.stdout | default('0') | int }}"
+          problems: "{{ trusttunnel_status_problems }}"
+      when: trusttunnel_status_mode == 'json'
+
+    - name: Show client status
+      ansible.builtin.debug:
+        msg:
+          - "Credentials users: {{ trusttunnel_status_credential_usernames | join(', ') }}"
+          - "Server configs: {{ trusttunnel_status_server_config_usernames | default([]) | join(', ') }}"
+          - "Local configs: {{ trusttunnel_status_local_config_usernames | default([]) | join(', ') }}"
+          - "Missing server configs: {{ trusttunnel_status_missing_server_configs | default([]) | join(', ') | default('none', true) }}"
+          - "Missing local configs: {{ trusttunnel_status_missing_local_configs | default([]) | join(', ') | default('none', true) }}"
+      when: trusttunnel_status_mode == 'clients'
+
+    - name: Show recent logs
+      ansible.builtin.debug:
+        msg: "{{ trusttunnel_status_recent_logs.stdout_lines | default([]) }}"
+      when: trusttunnel_status_mode == 'logs'
+
+    - name: Show human-readable status
+      ansible.builtin.debug:
+        msg:
+          - "TrustTunnel status"
+          - "──────────────────"
+          - "Host:              {{ inventory_hostname }}"
+          - "Overall:           {{ trusttunnel_status_overall }}"
+          - ""
+          - "Service:"
+          - "  Name:            {{ trusttunnel_status_service_name }}"
+          - "  Active:          {{ trusttunnel_status_service_active.stdout | default('unknown') }}"
+          - "  Enabled:         {{ trusttunnel_status_service_enabled.stdout | default('unknown') }}"
+          - "  Properties:      {{ trusttunnel_status_service_show.stdout_lines | default([]) | join('; ') }}"
+          - ""
+          - "Network:"
+          - "  TCP {{ trusttunnel_status_port }}:        {{ ((trusttunnel_status_tcp_listener.rc | default(1)) == 0) | ternary('listening', 'missing') }}"
+          - "  UDP {{ trusttunnel_status_port }}:        {{ ((trusttunnel_status_udp_listener.rc | default(1)) == 0) | ternary('listening', 'missing') }}"
+          - ""
+          - "Files:"
+          - "  Install dir:     {{ trusttunnel_status_install_dir }} {{ (trusttunnel_status_install_dir_stat.stat.exists | default(false)) | ternary('present', 'missing') }}"
+          - "  credentials:     {{ trusttunnel_status_credentials_file }} {{ (trusttunnel_status_credentials_stat.stat.exists | default(false)) | ternary('present', 'missing') }}"
+          - "  users:           {{ trusttunnel_status_credentials_user_count.stdout | default('0') }}"
+          - ""
+          - "Client configs:"
+          - "  Server files:    {{ trusttunnel_status_server_client_configs.matched | default(0) }}"
+          - "  Local files:     {{ trusttunnel_status_local_client_configs.matched | default(0) }}"
+          - "  Missing server:  {{ trusttunnel_status_missing_server_configs | default([]) | join(', ') | default('none', true) }}"
+          - "  Missing local:   {{ trusttunnel_status_missing_local_configs | default([]) | join(', ') | default('none', true) }}"
+          - ""
+          - "TLS:"
+          - "  Domain:          {{ trusttunnel_status_domain | default('not set', true) }}"
+          - "  Certificate:     {{ (trusttunnel_status_cert_stat.stat.exists | default(false)) | ternary('present', 'not found or not letsencrypt') }}"
+          - "  Expires:         {{ trusttunnel_status_cert_enddate.stdout | default('unknown') }}"
+          - "  Warning:         {{ ((trusttunnel_status_cert_checkend is skipped) or (trusttunnel_status_cert_checkend.rc | default(0) == 0)) | ternary('no warning', 'expires soon') }}"
+          - ""
+          - "Logs:"
+          - "  Checked lines:   {{ trusttunnel_status_log_lines }}"
+          - "  Warnings/errors: {{ trusttunnel_status_error_log_count.stdout | default('0') }}"
+          - ""
+          - "Problems:"
+          - "  {{ (trusttunnel_status_problems | length > 0) | ternary(trusttunnel_status_problems | join('; '), 'none') }}"
+      when: trusttunnel_status_mode == 'human'
