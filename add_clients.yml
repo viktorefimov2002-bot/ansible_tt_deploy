@@ -96,18 +96,71 @@
       delegate_to: localhost
       become: false
 
-    - name: Set added-client operation state
+    - name: Parse all usernames from current local credentials file
       ansible.builtin.set_fact:
-        trusttunnel_has_added_clients: "{{ (trusttunnel_added_client_usernames | length) > 0 }}"
+        trusttunnel_current_client_usernames: >-
+          {{ lookup('ansible.builtin.file', trusttunnel_credentials_local_file)
+             | regex_findall('(?m)^\s*username\s*=\s*["' ~ "'" ~ ']([^"' ~ "'" ~ ']+)["' ~ "'" ~ ']')
+             | unique
+             | list }}
       delegate_to: localhost
       become: false
 
-    - name: Validate actually added usernames
+    - name: Ensure local client config directory exists for missing-config scan
+      ansible.builtin.file:
+        path: "{{ trusttunnel_client_config_local_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Find local fetched client configs
+      ansible.builtin.find:
+        paths: "{{ trusttunnel_client_config_local_dir }}"
+        patterns: "{{ inventory_hostname }}_client_*.{{ trusttunnel_effective_client_config_format }}"
+        file_type: file
+      register: trusttunnel_local_client_config_files
+      delegate_to: localhost
+      become: false
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Parse usernames with existing local client configs
+      ansible.builtin.set_fact:
+        trusttunnel_local_client_config_usernames: >-
+          {{ trusttunnel_local_client_config_files.files | default([])
+             | map(attribute='path')
+             | map('basename')
+             | map('regex_replace', '^.*_client_(.*)\.' ~ trusttunnel_effective_client_config_format ~ '$', '\1')
+             | unique
+             | list }}
+      delegate_to: localhost
+      become: false
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Build client config generation target list
+      ansible.builtin.set_fact:
+        trusttunnel_client_config_target_usernames: >-
+          {{ (trusttunnel_added_client_usernames
+              + (trusttunnel_current_client_usernames | difference(trusttunnel_local_client_config_usernames | default([]))))
+             | unique
+             | list }}
+      delegate_to: localhost
+      become: false
+
+    - name: Set added-client operation state
+      ansible.builtin.set_fact:
+        trusttunnel_has_added_clients: "{{ (trusttunnel_added_client_usernames | length) > 0 }}"
+        trusttunnel_has_client_config_targets: "{{ (trusttunnel_client_config_target_usernames | length) > 0 }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Validate current credentials usernames
       ansible.builtin.assert:
         that:
           - item is match('^[A-Za-z0-9_.@-]+$')
-        fail_msg: "Invalid added username parsed from helper output: {{ item | default('') }}"
-      loop: "{{ trusttunnel_added_client_usernames }}"
+        fail_msg: "Invalid username in {{ trusttunnel_credentials_local_file }}: {{ item | default('') }}"
+      loop: "{{ trusttunnel_current_client_usernames }}"
       delegate_to: localhost
       become: false
 
@@ -120,7 +173,7 @@
       become: false
       when:
         - trusttunnel_apply_to_server | bool
-        - trusttunnel_has_added_clients | bool
+        - trusttunnel_has_client_config_targets | bool
 
   tasks:
     - name: Upload updated credentials file
@@ -153,7 +206,7 @@
         - trusttunnel_apply_to_server | bool
         - trusttunnel_has_added_clients | bool
 
-    - name: Generate client configs for actually added users
+    - name: Generate missing client configs
       ansible.builtin.command:
         chdir: "{{ trusttunnel_install_dir }}"
         cmd: >-
@@ -165,12 +218,12 @@
           {% for upstream in trusttunnel_effective_dns_upstreams %}
           --dns-upstream {{ upstream | quote }}
           {% endfor %}
-      loop: "{{ trusttunnel_added_client_usernames }}"
-      register: trusttunnel_added_client_config_results
+      loop: "{{ trusttunnel_client_config_target_usernames }}"
+      register: trusttunnel_client_config_target_results
       changed_when: false
       when:
         - trusttunnel_apply_to_server | bool
-        - trusttunnel_has_added_clients | bool
+        - trusttunnel_has_client_config_targets | bool
       no_log: true
 
     - name: Save generated client configs on server with exact username case
@@ -180,32 +233,21 @@
         group: root
         mode: "0600"
         content: "{{ item.stdout }}\n"
-      loop: "{{ trusttunnel_added_client_config_results.results | default([]) }}"
+      loop: "{{ trusttunnel_client_config_target_results.results | default([]) }}"
       when:
         - trusttunnel_apply_to_server | bool
-        - trusttunnel_has_added_clients | bool
+        - trusttunnel_has_client_config_targets | bool
       no_log: true
-
-    - name: Ensure local client config directory exists
-      ansible.builtin.file:
-        path: "{{ trusttunnel_client_config_local_dir }}"
-        state: directory
-        mode: "0700"
-      delegate_to: localhost
-      become: false
-      when:
-        - trusttunnel_apply_to_server | bool
-        - trusttunnel_has_added_clients | bool
 
     - name: Fetch generated client configs using exact username case
       ansible.builtin.fetch:
         src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         flat: true
-      loop: "{{ trusttunnel_added_client_usernames }}"
+      loop: "{{ trusttunnel_client_config_target_usernames }}"
       when:
         - trusttunnel_apply_to_server | bool
-        - trusttunnel_has_added_clients | bool
+        - trusttunnel_has_client_config_targets | bool
       no_log: true
 
     - name: Report added client operation result
@@ -216,7 +258,9 @@
                 | ternary(
                     (trusttunnel_apply_to_server | bool
                      | ternary(['Applied credentials file to ' ~ inventory_hostname,
-                                'Restarted TrustTunnel service to reload credentials',
-                                'Generated and fetched client configs for: ' ~ (trusttunnel_added_client_usernames | join(', '))],
+                                'Restarted TrustTunnel service to reload credentials'],
                                ['Did not apply changes to server because trusttunnel_apply_to_server=false'])),
-                    ['No new clients were added; skipped server apply and client config generation'])) }}
+                    ['No new clients were added']))
+             + (trusttunnel_has_client_config_targets | bool
+                | ternary(['Generated and fetched missing client configs for: ' ~ (trusttunnel_client_config_target_usernames | join(', '))],
+                          ['No missing client configs found locally'])) }}
