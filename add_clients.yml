@@ -11,6 +11,7 @@
     trusttunnel_new_clients_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/new_clients.toml"
     trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
     trusttunnel_effective_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_effective_client_config_name: "{{ trusttunnel_client_config_name | default('TrustTunnel') }}"
     trusttunnel_effective_dns_upstreams: "{{ trusttunnel_dns_upstreams | default([]) }}"
     trusttunnel_sync_from_server: auto
     trusttunnel_apply_to_server: true
@@ -85,23 +86,28 @@
       register: trusttunnel_local_add_clients_result
       changed_when: "'Added VPN client:' in trusttunnel_local_add_clients_result.stdout"
 
-    - name: Parse usernames from new clients file
+    - name: Parse actually added usernames from helper output
       ansible.builtin.set_fact:
         trusttunnel_added_client_usernames: >-
-          {{ lookup('ansible.builtin.file', trusttunnel_new_clients_file)
-             | regex_findall('(?m)^\s*username\s*=\s*["' ~ "'" ~ ']([^"' ~ "'" ~ ']+)["' ~ "'" ~ ']')
+          {{ trusttunnel_local_add_clients_result.stdout
+             | regex_findall('(?m)^Added VPN client: (.+)$')
              | unique
              | list }}
       delegate_to: localhost
       become: false
 
-    - name: Validate parsed usernames
+    - name: Set added-client operation state
+      ansible.builtin.set_fact:
+        trusttunnel_has_added_clients: "{{ (trusttunnel_added_client_usernames | length) > 0 }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Validate actually added usernames
       ansible.builtin.assert:
         that:
-          - trusttunnel_added_client_usernames | length > 0
           - item is match('^[A-Za-z0-9_.@-]+$')
-        fail_msg: "Invalid or empty username in {{ trusttunnel_new_clients_file }}: {{ item | default('') }}"
-      loop: "{{ trusttunnel_added_client_usernames | default([]) }}"
+        fail_msg: "Invalid added username parsed from helper output: {{ item | default('') }}"
+      loop: "{{ trusttunnel_added_client_usernames }}"
       delegate_to: localhost
       become: false
 
@@ -112,7 +118,9 @@
         fail_msg: "trusttunnel_public_address is empty. Run ./ttctl init --config deploy.yml first."
       delegate_to: localhost
       become: false
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
 
   tasks:
     - name: Upload updated credentials file
@@ -123,13 +131,17 @@
         group: root
         mode: "0600"
         backup: true
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
 
     - name: Restart TrustTunnel service to reload credentials
       ansible.builtin.command:
         cmd: systemctl restart trusttunnel
       changed_when: true
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
 
     - name: Verify TrustTunnel service is active after restart
       ansible.builtin.command:
@@ -137,7 +149,42 @@
       register: trusttunnel_service_active_after_restart
       changed_when: false
       failed_when: trusttunnel_service_active_after_restart.rc != 0
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
+
+    - name: Generate client configs for actually added users
+      ansible.builtin.command:
+        chdir: "{{ trusttunnel_install_dir }}"
+        cmd: >-
+          {{ (trusttunnel_install_dir ~ '/trusttunnel_endpoint') | quote }} vpn.toml hosts.toml
+          -c {{ item | quote }}
+          -a {{ trusttunnel_public_address | quote }}
+          --format {{ trusttunnel_effective_client_config_format | quote }}
+          --name {{ trusttunnel_effective_client_config_name | quote }}
+          {% for upstream in trusttunnel_effective_dns_upstreams %}
+          --dns-upstream {{ upstream | quote }}
+          {% endfor %}
+      loop: "{{ trusttunnel_added_client_usernames }}"
+      register: trusttunnel_added_client_config_results
+      changed_when: false
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
+      no_log: true
+
+    - name: Save generated client configs on server with exact username case
+      ansible.builtin.copy:
+        dest: "{{ trusttunnel_install_dir }}/client_{{ item.item }}.{{ trusttunnel_effective_client_config_format }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ item.stdout }}\n"
+      loop: "{{ trusttunnel_added_client_config_results.results | default([]) }}"
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
+      no_log: true
 
     - name: Ensure local client config directory exists
       ansible.builtin.file:
@@ -146,38 +193,30 @@
         mode: "0700"
       delegate_to: localhost
       become: false
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
 
-    - name: Generate client configs for added users
-      ansible.builtin.shell: >-
-        set -eu;
-        cd {{ trusttunnel_install_dir | quote }};
-        ./trusttunnel_endpoint vpn.toml hosts.toml
-        -c {{ item | quote }}
-        -a {{ trusttunnel_public_address | quote }}
-        --format {{ trusttunnel_effective_client_config_format | quote }}
-        {% for upstream in trusttunnel_effective_dns_upstreams %} --dns-upstream {{ upstream | quote }}{% endfor %}
-        > {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_effective_client_config_format) | quote }};
-        chmod 600 {{ (trusttunnel_install_dir ~ '/client_' ~ item ~ '.' ~ trusttunnel_effective_client_config_format) | quote }}
-      args:
-        executable: /bin/bash
-      loop: "{{ trusttunnel_added_client_usernames }}"
-      when: trusttunnel_apply_to_server | bool
-
-    - name: Fetch generated client configs
+    - name: Fetch generated client configs using exact username case
       ansible.builtin.fetch:
         src: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         dest: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
         flat: true
       loop: "{{ trusttunnel_added_client_usernames }}"
-      when: trusttunnel_apply_to_server | bool
+      when:
+        - trusttunnel_apply_to_server | bool
+        - trusttunnel_has_added_clients | bool
+      no_log: true
 
     - name: Report added client operation result
       ansible.builtin.debug:
         msg: >-
           {{ ['Updated local credentials file: ' ~ trusttunnel_credentials_local_file]
-             + (trusttunnel_apply_to_server | bool
-                | ternary(['Applied credentials file to ' ~ inventory_hostname,
-                           'Restarted TrustTunnel service to reload credentials',
-                           'Generated and fetched client configs for: ' ~ (trusttunnel_added_client_usernames | join(', '))],
-                          ['Did not apply changes to server because trusttunnel_apply_to_server=false'])) }}
+             + (trusttunnel_has_added_clients | bool
+                | ternary(
+                    (trusttunnel_apply_to_server | bool
+                     | ternary(['Applied credentials file to ' ~ inventory_hostname,
+                                'Restarted TrustTunnel service to reload credentials',
+                                'Generated and fetched client configs for: ' ~ (trusttunnel_added_client_usernames | join(', '))],
+                               ['Did not apply changes to server because trusttunnel_apply_to_server=false'])),
+                    ['No new clients were added; skipped server apply and client config generation'])) }}
