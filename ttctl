@@ -32,7 +32,7 @@ Commands:
   status               Show TrustTunnel diagnostics using status.yml.
                        Default output is human-readable.
                        --short shows a one-line summary.
-                       --json shows a machine-readable Ansible dict.
+                       --json shows machine-readable JSON.
                        --logs shows recent journalctl lines.
                        --clients shows credentials/client config drift.
                        --log-lines N controls how many journal lines are checked.
@@ -415,9 +415,28 @@ status() {
     ''|*[!0-9]*) fail "--log-lines must be a positive integer" ;;
   esac
 
-  run_playbook status.yml \
-    -e "trusttunnel_status_mode=${status_mode}" \
-    -e "trusttunnel_status_log_lines=${log_lines}"
+  require_file "$INVENTORY_FILE"
+  require_file "$VARS_FILE"
+  if [ -f "$VAULT_FILE" ]; then
+    ensure_vault_password_file
+  fi
+
+  status_output=$(mktemp /tmp/trusttunnel-ttctl-status.XXXXXX)
+  ansible_output=$(mktemp /tmp/trusttunnel-ttctl-ansible.XXXXXX)
+
+  if run_playbook status.yml \
+      -e "trusttunnel_status_mode=${status_mode}" \
+      -e "trusttunnel_status_log_lines=${log_lines}" \
+      -e "trusttunnel_status_output_file=${status_output}" \
+      >"$ansible_output" 2>&1; then
+    cat "$status_output"
+    rm -f "$status_output" "$ansible_output"
+  else
+    echo "Error: status diagnostics failed. Full Ansible output:" >&2
+    cat "$ansible_output" >&2
+    rm -f "$status_output" "$ansible_output"
+    exit 1
+  fi
 }
 
 resolve_client_operation_args() {
