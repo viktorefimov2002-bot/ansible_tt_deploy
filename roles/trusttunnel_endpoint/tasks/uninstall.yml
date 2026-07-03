@@ -1,4 +1,38 @@
 ---
+- name: Stop TrustTunnel healthcheck timer
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_monitoring_service_name }}.timer"
+    state: stopped
+  failed_when: false
+  when: trusttunnel_remove_monitoring | bool
+
+- name: Disable TrustTunnel healthcheck timer
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_monitoring_service_name }}.timer"
+    enabled: false
+  failed_when: false
+  when: trusttunnel_remove_monitoring | bool
+
+- name: Remove TrustTunnel healthcheck timer unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ trusttunnel_monitoring_service_name }}.timer"
+    state: absent
+  notify: Reload systemd
+  when: trusttunnel_remove_monitoring | bool
+
+- name: Remove TrustTunnel healthcheck service unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ trusttunnel_monitoring_service_name }}.service"
+    state: absent
+  notify: Reload systemd
+  when: trusttunnel_remove_monitoring | bool
+
+- name: Remove TrustTunnel healthcheck script
+  ansible.builtin.file:
+    path: "{{ trusttunnel_monitoring_script_path }}"
+    state: absent
+  when: trusttunnel_remove_monitoring | bool
+
 - name: Stop TrustTunnel service
   ansible.builtin.systemd:
     name: "{{ trusttunnel_service_name }}"
@@ -135,5 +169,6 @@
   ansible.builtin.debug:
     msg:
       - "TrustTunnel service, unit and install files were removed from {{ inventory_hostname }}."
+      - "Monitoring units were removed only if trusttunnel_remove_monitoring=true."
       - "Let's Encrypt certificate was removed only if trusttunnel_remove_letsencrypt_cert=true."
       - "Firewall ports were closed only if trusttunnel_close_firewall=true."
