@@ -1,0 +1,12 @@
+[Unit]
+Description=Run TrustTunnel healthcheck periodically
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ trusttunnel_monitoring_interval }}
+RandomizedDelaySec={{ trusttunnel_monitoring_randomized_delay }}
+Persistent=true
+Unit={{ trusttunnel_monitoring_service_name }}.service
+
+[Install]
+WantedBy=timers.target
