@@ -291,6 +291,14 @@ optional_keys = {
     "generate_client_random_prefix": "trusttunnel_generate_client_random_prefix",
     "dns_upstreams": "trusttunnel_dns_upstreams",
     "rules": "trusttunnel_rules",
+    "monitoring_enabled": "trusttunnel_monitoring_enabled",
+    "monitoring_interval": "trusttunnel_monitoring_interval",
+    "monitoring_randomized_delay": "trusttunnel_monitoring_randomized_delay",
+    "monitoring_log_lines": "trusttunnel_monitoring_log_lines",
+    "monitoring_cert_warning_days": "trusttunnel_monitoring_cert_warning_days",
+    "monitoring_require_tcp": "trusttunnel_monitoring_require_tcp",
+    "monitoring_require_udp": "trusttunnel_monitoring_require_udp",
+    "monitoring_require_client_configs": "trusttunnel_monitoring_require_client_configs",
 }
 for src_key, dst_key in optional_keys.items():
     if src_key in trusttunnel:
