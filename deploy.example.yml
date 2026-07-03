@@ -3,6 +3,7 @@
 # Then run one of:
 #   ./ttctl init --config deploy.yml
 #   ./ttctl init --config deploy.yml --ask-ssh-pass
+#   ./ttctl init --config deploy.yml --ask-become-pass
 #   ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
 #   ./ttctl deploy
 
@@ -42,6 +43,17 @@ trusttunnel:
   # rules:
   #   - cidr: 10.0.0.0/8
   #     action: deny
+
+  # Optional server-side healthcheck timer.
+  # This is local monitoring on the server. It writes results to journald.
+  # monitoring_enabled: false
+  # monitoring_interval: 2min
+  # monitoring_randomized_delay: 30s
+  # monitoring_log_lines: 50
+  # monitoring_cert_warning_days: 14
+  # monitoring_require_tcp: true
+  # monitoring_require_udp: true
+  # monitoring_require_client_configs: false
 
 # Do not put SSH/sudo passwords here for normal use.
 # Prefer interactive Vault-backed prompts:
