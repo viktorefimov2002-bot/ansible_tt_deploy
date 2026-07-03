@@ -1,0 +1,109 @@
+#!/bin/sh
+set -eu
+
+SERVICE_NAME="{{ trusttunnel_service_name }}"
+INSTALL_DIR="{{ trusttunnel_install_dir }}"
+CREDENTIALS_FILE="${INSTALL_DIR}/credentials.toml"
+PORT="{{ trusttunnel_listen_address | regex_replace('^.*:', '') }}"
+DOMAIN="{{ trusttunnel_domain }}"
+CERT_MODE="{{ trusttunnel_cert_mode }}"
+CERT_WARNING_SECONDS=$(({{ trusttunnel_monitoring_cert_warning_days | int }} * 86400))
+LOG_LINES={{ trusttunnel_monitoring_log_lines | int }}
+REQUIRE_TCP="{{ trusttunnel_monitoring_require_tcp | bool | ternary('yes', 'no') }}"
+REQUIRE_UDP="{{ trusttunnel_monitoring_require_udp | bool | ternary('yes', 'no') }}"
+REQUIRE_CLIENT_CONFIGS="{{ trusttunnel_monitoring_require_client_configs | bool | ternary('yes', 'no') }}"
+CONFIG_FORMAT="{{ trusttunnel_client_config_format }}"
+
+problems=""
+
+add_problem() {
+  if [ -z "$problems" ]; then
+    problems="$1"
+  else
+    problems="$problems; $1"
+  fi
+}
+
+check_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+  state=$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)
+  add_problem "service is not active: ${state:-unknown}"
+fi
+
+if [ ! -d "$INSTALL_DIR" ]; then
+  add_problem "install directory is missing: $INSTALL_DIR"
+fi
+
+if [ ! -f "$CREDENTIALS_FILE" ]; then
+  add_problem "credentials file is missing: $CREDENTIALS_FILE"
+else
+  user_count=$(awk -F= '/^[[:space:]]*username[[:space:]]*=/{count++} END{print count+0}' "$CREDENTIALS_FILE" 2>/dev/null || echo 0)
+  if [ "$user_count" -le 0 ]; then
+    add_problem "credentials file has no users or could not be parsed"
+  fi
+fi
+
+if check_command ss; then
+  if [ "$REQUIRE_TCP" = "yes" ]; then
+    if ! ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+      add_problem "TCP ${PORT} is not listening"
+    fi
+  fi
+
+  if [ "$REQUIRE_UDP" = "yes" ]; then
+    if ! ss -lnu 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+      add_problem "UDP ${PORT} is not listening"
+    fi
+  fi
+else
+  add_problem "ss command is missing; cannot check listening ports"
+fi
+
+if [ "$REQUIRE_CLIENT_CONFIGS" = "yes" ] && [ -f "$CREDENTIALS_FILE" ] && [ -d "$INSTALL_DIR" ]; then
+  missing_configs=""
+  awk -F= '/^[[:space:]]*username[[:space:]]*=/ {
+    value=$0;
+    sub(/^[^=]*=[[:space:]]*/, "", value);
+    gsub(/^[[:space:]]*["'"'"']|["'"'"'][[:space:]]*$/, "", value);
+    print value;
+  }' "$CREDENTIALS_FILE" | while IFS= read -r username; do
+    [ -n "$username" ] || continue
+    [ -f "${INSTALL_DIR}/client_${username}.${CONFIG_FORMAT}" ] || echo "$username"
+  done > /tmp/trusttunnel-healthcheck-missing-configs.$$ || true
+  if [ -s /tmp/trusttunnel-healthcheck-missing-configs.$$ ]; then
+    missing_configs=$(paste -sd, /tmp/trusttunnel-healthcheck-missing-configs.$$)
+    add_problem "missing server client configs: $missing_configs"
+  fi
+  rm -f /tmp/trusttunnel-healthcheck-missing-configs.$$
+fi
+
+if [ "$CERT_MODE" = "letsencrypt" ] && [ -n "$DOMAIN" ]; then
+  cert_file="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+  if [ ! -f "$cert_file" ]; then
+    add_problem "Let's Encrypt certificate is missing: $cert_file"
+  elif check_command openssl; then
+    if ! openssl x509 -in "$cert_file" -checkend "$CERT_WARNING_SECONDS" -noout >/dev/null 2>&1; then
+      add_problem "certificate expires within {{ trusttunnel_monitoring_cert_warning_days | int }} days"
+    fi
+  else
+    add_problem "openssl command is missing; cannot check certificate expiry"
+  fi
+fi
+
+if check_command journalctl; then
+  error_count=$(journalctl -u "$SERVICE_NAME" -n "$LOG_LINES" --no-pager 2>/dev/null | grep -Eic 'error|failed|panic|fatal|critical' || true)
+  if [ "$error_count" -gt 0 ]; then
+    add_problem "recent logs contain ${error_count} error-like lines in last ${LOG_LINES} lines"
+  fi
+fi
+
+if [ -n "$problems" ]; then
+  echo "FAIL: $problems"
+  exit 1
+fi
+
+echo "OK: ${SERVICE_NAME} active, tcp/${PORT} checked, udp/${PORT} checked, credentials users=${user_count:-unknown}"
+exit 0
