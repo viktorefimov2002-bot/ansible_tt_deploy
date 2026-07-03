@@ -1,0 +1,50 @@
+---
+- name: Render TrustTunnel healthcheck script
+  ansible.builtin.template:
+    src: trusttunnel-healthcheck.sh.j2
+    dest: "{{ trusttunnel_monitoring_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render TrustTunnel healthcheck service
+  ansible.builtin.template:
+    src: trusttunnel-healthcheck.service.j2
+    dest: "/etc/systemd/system/{{ trusttunnel_monitoring_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Render TrustTunnel healthcheck timer
+  ansible.builtin.template:
+    src: trusttunnel-healthcheck.timer.j2
+    dest: "/etc/systemd/system/{{ trusttunnel_monitoring_service_name }}.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers before enabling healthcheck timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start TrustTunnel healthcheck timer
+  ansible.builtin.systemd:
+    name: "{{ trusttunnel_monitoring_service_name }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Run TrustTunnel healthcheck once after installation
+  ansible.builtin.command:
+    cmd: "{{ trusttunnel_monitoring_script_path }}"
+  register: trusttunnel_monitoring_initial_check
+  changed_when: false
+  failed_when: false
+
+- name: Report TrustTunnel healthcheck installation
+  ansible.builtin.debug:
+    msg:
+      - "TrustTunnel healthcheck timer installed: {{ trusttunnel_monitoring_service_name }}.timer"
+      - "Interval: {{ trusttunnel_monitoring_interval }}"
+      - "Initial result: {{ trusttunnel_monitoring_initial_check.stdout | default('') }}"
