@@ -1,0 +1,17 @@
+[Unit]
+Description=TrustTunnel healthcheck
+After=network-online.target {{ trusttunnel_service_name }}.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ trusttunnel_monitoring_script_path }}
+User=root
+Group=root
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+ReadOnlyPaths={{ trusttunnel_install_dir }} /etc/letsencrypt

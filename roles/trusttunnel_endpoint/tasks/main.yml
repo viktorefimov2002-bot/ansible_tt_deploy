@@ -41,10 +41,10 @@
     trusttunnel_effective_client_usernames: >-
       {{
         (lookup('ansible.builtin.file', role_path ~ '/files/' ~ trusttunnel_existing_credentials_file)
-         | regex_findall('(?m)^\\s*username\\s*=\\s*"([^"]+)"'))
+         | regex_findall('(?m)^\s*username\s*=\s*"([^"]+)"'))
         +
         (lookup('ansible.builtin.file', role_path ~ '/files/' ~ trusttunnel_existing_credentials_file)
-         | regex_findall("(?m)^\\s*username\\s*=\\s*'([^']+)'"))
+         | regex_findall("(?m)^\s*username\s*=\s*'([^']+)'") )
       }}
   when: trusttunnel_use_existing_credentials | bool
   no_log: true
@@ -258,7 +258,6 @@
   when:
     - trusttunnel_cert_mode == 'letsencrypt'
     - trusttunnel_certbot_timer_check.rc == 0
-    - "'certbot.timer' in trusttunnel_certbot_timer_check.stdout"
 
 - name: Install cron fallback for Certbot automatic renewal
   ansible.builtin.cron:
@@ -351,6 +350,10 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Install TrustTunnel monitoring
+  ansible.builtin.include_tasks: monitoring.yml
+  when: trusttunnel_monitoring_enabled | bool
 
 - name: Write deployment summary and follow-up commands
   ansible.builtin.include_tasks: summary.yml

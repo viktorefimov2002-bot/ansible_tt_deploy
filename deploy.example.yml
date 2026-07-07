@@ -1,0 +1,68 @@
+---
+# Copy this file to deploy.yml and adjust values.
+# Then run one of:
+#   ./ttctl init --config deploy.yml
+#   ./ttctl init --config deploy.yml --ask-ssh-pass
+#   ./ttctl init --config deploy.yml --ask-become-pass
+#   ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+#   ./ttctl deploy
+
+server:
+  host: 203.0.113.10
+  ssh_user: root
+  # Set become: true when ssh_user is not root and the user has sudo rights.
+  become: false
+
+trusttunnel:
+  domain: vpn.example.com
+  public_address: vpn.example.com:443
+  cert_mode: letsencrypt
+  acme_email: admin@example.com
+
+  open_firewall: false
+  firewall_backend: auto
+
+  # To preserve clients from an existing server, set existing_credentials_source.
+  # ttctl will copy it to roles/trusttunnel_endpoint/files/ and set
+  # trusttunnel_existing_credentials_file automatically.
+  # existing_credentials_source: ./credentials.toml
+  # existing_credentials_file: credentials.toml
+
+  clients:
+    - username: user1
+      password: change-me
+
+  # Optional examples:
+  # install_version: "1.0.33"
+  # client_config_format: toml
+  # prune_client_configs: false
+  # generate_client_random_prefix: false
+  # dns_upstreams:
+  #   - 1.1.1.1:53
+  #   - 8.8.8.8:53
+  # rules:
+  #   - cidr: 10.0.0.0/8
+  #     action: deny
+
+  # Optional server-side healthcheck timer.
+  # This is local monitoring on the server. It writes results to journald.
+  # monitoring_enabled: false
+  # monitoring_interval: 2min
+  # monitoring_randomized_delay: 30s
+  # monitoring_log_lines: 50
+  # monitoring_cert_warning_days: 14
+  # monitoring_require_tcp: true
+  # monitoring_require_udp: true
+  # monitoring_require_client_configs: false
+
+# Do not put SSH/sudo passwords here for normal use.
+# Prefer interactive Vault-backed prompts:
+#   ./ttctl init --config deploy.yml --ask-ssh-pass
+#   ./ttctl init --config deploy.yml --ask-become-pass
+#   ./ttctl init --config deploy.yml --ask-ssh-pass --ask-become-pass
+#
+# Those commands write ansible_password / ansible_become_password to encrypted vault.yml.
+# Plaintext fallback is still supported for temporary local testing only:
+# ansible:
+#   password: remote-ssh-password
+#   become_password: sudo-password

@@ -40,6 +40,18 @@ trusttunnel_existing_credentials_file: ""
 
 trusttunnel_rules: []
 
+trusttunnel_monitoring_enabled: false
+trusttunnel_monitoring_interval: 2min
+trusttunnel_monitoring_randomized_delay: 30s
+trusttunnel_monitoring_log_lines: 50
+trusttunnel_monitoring_cert_warning_days: 14
+trusttunnel_monitoring_require_tcp: true
+trusttunnel_monitoring_require_udp: true
+trusttunnel_monitoring_require_client_configs: false
+trusttunnel_monitoring_script_path: /usr/local/bin/trusttunnel-healthcheck
+trusttunnel_monitoring_service_name: trusttunnel-healthcheck
+
 trusttunnel_remove_install_dir: true
 trusttunnel_remove_letsencrypt_cert: false
 trusttunnel_remove_certbot_renewal: true
+trusttunnel_remove_monitoring: true

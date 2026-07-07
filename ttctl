@@ -1,0 +1,590 @@
+#!/bin/bash
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/deploy.yml"
+INVENTORY_FILE="${SCRIPT_DIR}/inventory.ini"
+VARS_FILE="${SCRIPT_DIR}/vars.yml"
+VAULT_FILE="${SCRIPT_DIR}/vault.yml"
+CREDENTIALS_FILES_DIR="${SCRIPT_DIR}/roles/trusttunnel_endpoint/files"
+DEFAULT_NEW_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/new_clients.toml"
+DEFAULT_REMOVE_CLIENTS_FILE="${CREDENTIALS_FILES_DIR}/remove_clients.txt"
+DEFAULT_CREDENTIALS_FILE="${CREDENTIALS_FILES_DIR}/credentials.toml"
+VAULT_PASSWORD_FILE=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./ttctl init [--config deploy.yml] [--vault] [--ask-ssh-pass] [--ask-become-pass]
+  ./ttctl deploy [extra ansible-playbook args...]
+  ./ttctl status [--short|--json|--logs|--clients] [--log-lines N]
+  ./ttctl add-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [new_clients.toml] [credentials.toml]
+  ./ttctl remove-client [--sync-from-server|--no-sync-from-server] [--apply|--no-apply] [remove_clients.txt] [credentials.toml]
+  ./ttctl import-credentials <credentials.toml>
+  ./ttctl uninstall [extra ansible-playbook args...]
+
+Commands:
+  init                 Generate inventory.ini and vars.yml from deploy.yml.
+                       With --vault, secrets are written to encrypted vault.yml.
+                       Use --ask-ssh-pass to prompt for the SSH password.
+                       Use --ask-become-pass to prompt for the sudo/become password.
+  deploy               Run the full install/update playbook.
+  status               Show TrustTunnel diagnostics using status.yml.
+                       Default output is human-readable.
+                       --short shows a one-line summary.
+                       --json shows machine-readable JSON.
+                       --logs shows recent journalctl lines.
+                       --clients shows credentials/client config drift.
+                       --log-lines N controls how many journal lines are checked.
+  add-client           Run add_clients.yml. The playbook can fetch credentials,
+                       update them locally, upload them, restart TrustTunnel,
+                       generate missing client configs, and fetch them locally.
+  remove-client        Run remove_clients.yml. The playbook can fetch credentials,
+                       update them locally, upload them, restart TrustTunnel,
+                       and remove generated client config files.
+                       --sync-from-server forces a refresh before editing.
+                       --no-sync-from-server disables automatic fetch.
+                       --apply or --no-apply skips the apply prompt.
+                       --deploy is accepted as an alias for --apply.
+                       --no-deploy is accepted as an alias for --no-apply.
+  import-credentials   Copy an existing credentials.toml into the Ansible role files directory.
+  uninstall            Run existing uninstall helper when present, otherwise run uninstall.yml.
+
+Rollback:
+  This helper does not modify git main. To discard generated local runtime files:
+    rm -f inventory.ini vars.yml vault.yml deploy.sh uninstall.sh
+    rm -rf client_configs
+EOF
+}
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+require_file() {
+  file_path="$1"
+  [ -f "$file_path" ] || fail "file not found: $file_path"
+}
+
+prompt_yes_no() {
+  label="$1"
+  default="$2"
+
+  if [ ! -r /dev/tty ]; then
+    case "$default" in
+      yes) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+
+  while :; do
+    printf "%s [%s]: " "$label" "$default" >&2
+    IFS= read -r value </dev/tty
+    if [ -z "$value" ]; then
+      value="$default"
+    fi
+    case "$value" in
+      yes|y|Y|да|д|Д) return 0 ;;
+      no|n|N|нет|н|Н) return 1 ;;
+      *) printf "Invalid value '%s'. Allowed values: yes/no or да/нет\n" "$value" >&2 ;;
+    esac
+  done
+}
+
+read_secret() {
+  label="$1"
+  if [ ! -r /dev/tty ]; then
+    fail "cannot read secret without an interactive terminal"
+  fi
+
+  printf "%s: " "$label" >&2
+  old_tty_settings=$(stty -g </dev/tty)
+  trap 'stty "$old_tty_settings" </dev/tty' INT TERM
+  stty -echo </dev/tty
+  IFS= read -r value </dev/tty
+  stty "$old_tty_settings" </dev/tty
+  trap - INT TERM
+  printf '\n' >&2
+  printf "%s" "$value"
+}
+
+cleanup() {
+  if [ -n "${VAULT_PASSWORD_FILE:-}" ] && [ -f "$VAULT_PASSWORD_FILE" ]; then
+    rm -f "$VAULT_PASSWORD_FILE"
+  fi
+}
+
+trap cleanup EXIT
+
+write_vault_password_file() {
+  vault_password="$1"
+  VAULT_PASSWORD_FILE=$(mktemp /tmp/trusttunnel-ttctl-vault-pass.XXXXXX)
+  chmod 600 "$VAULT_PASSWORD_FILE"
+  printf "%s\n" "$vault_password" > "$VAULT_PASSWORD_FILE"
+}
+
+ensure_vault_password_file() {
+  if [ ! -f "$VAULT_FILE" ]; then
+    return 0
+  fi
+  if [ -n "${VAULT_PASSWORD_FILE:-}" ] && [ -f "$VAULT_PASSWORD_FILE" ]; then
+    return 0
+  fi
+
+  vault_password=$(read_secret "Ansible Vault password")
+  [ -n "$vault_password" ] || fail "Vault password cannot be empty"
+  write_vault_password_file "$vault_password"
+}
+
+resolve_init_options() {
+  config_file="$DEFAULT_CONFIG_FILE"
+  vault_enabled="false"
+  ask_ssh_pass="false"
+  ask_become_pass="false"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --config)
+        [ "$#" -ge 2 ] || fail "--config requires a path"
+        config_file="$2"
+        shift 2
+        ;;
+      --vault)
+        vault_enabled="true"
+        shift
+        ;;
+      --ask-ssh-pass)
+        ask_ssh_pass="true"
+        vault_enabled="true"
+        shift
+        ;;
+      --ask-become-pass)
+        ask_become_pass="true"
+        vault_enabled="true"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "unknown init argument: $1"
+        ;;
+    esac
+  done
+}
+
+init_from_config() {
+  resolve_init_options "$@"
+  require_file "$config_file"
+
+  if [ "$vault_enabled" = "true" ] && ! command -v ansible-vault >/dev/null 2>&1; then
+    fail "ansible-vault was not found in PATH. Install Ansible or run without --vault."
+  fi
+
+  asked_ssh_password=""
+  asked_become_password=""
+  vault_password=""
+
+  if [ "$ask_ssh_pass" = "true" ]; then
+    asked_ssh_password=$(read_secret "Remote SSH password for Ansible")
+    [ -n "$asked_ssh_password" ] || fail "SSH password cannot be empty"
+  fi
+
+  if [ "$ask_become_pass" = "true" ]; then
+    asked_become_password=$(read_secret "Remote sudo/become password for Ansible")
+    [ -n "$asked_become_password" ] || fail "sudo/become password cannot be empty"
+  fi
+
+  if [ "$vault_enabled" = "true" ]; then
+    vault_password=$(read_secret "Ansible Vault password for vault.yml")
+    vault_password_confirm=$(read_secret "Confirm Ansible Vault password")
+    [ -n "$vault_password" ] || fail "Vault password cannot be empty"
+    [ "$vault_password" = "$vault_password_confirm" ] || fail "Vault passwords do not match"
+  fi
+
+  CONFIG_FILE="$config_file" \
+  INVENTORY_FILE="$INVENTORY_FILE" \
+  VARS_FILE="$VARS_FILE" \
+  VAULT_FILE="$VAULT_FILE" \
+  CREDENTIALS_FILES_DIR="$CREDENTIALS_FILES_DIR" \
+  TTCTL_VAULT_ENABLED="$vault_enabled" \
+  TTCTL_ASKED_SSH_PASSWORD="$asked_ssh_password" \
+  TTCTL_ASKED_BECOME_PASSWORD="$asked_become_password" \
+  python3 <<'PY'
+import os
+import shutil
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("Error: Python package 'yaml' was not found. Install python3-yaml or PyYAML, or use ./scripts/install_requirements.sh.", file=sys.stderr)
+    sys.exit(1)
+
+config_path = Path(os.environ["CONFIG_FILE"])
+inventory_path = Path(os.environ["INVENTORY_FILE"])
+vars_path = Path(os.environ["VARS_FILE"])
+vault_path = Path(os.environ["VAULT_FILE"])
+credentials_dir = Path(os.environ["CREDENTIALS_FILES_DIR"])
+vault_enabled = os.environ.get("TTCTL_VAULT_ENABLED") == "true"
+asked_ssh_password = os.environ.get("TTCTL_ASKED_SSH_PASSWORD", "")
+asked_become_password = os.environ.get("TTCTL_ASKED_BECOME_PASSWORD", "")
+
+with config_path.open("r", encoding="utf-8") as fh:
+    config = yaml.safe_load(fh) or {}
+
+server = config.get("server") or {}
+trusttunnel = config.get("trusttunnel") or {}
+ansible = config.get("ansible") or {}
+
+host = server.get("host")
+if not host:
+    print("Error: deploy config must contain server.host", file=sys.stderr)
+    sys.exit(1)
+
+ssh_user = server.get("ssh_user", "root")
+become = bool(server.get("become", ssh_user != "root"))
+
+inventory_vars = [f"ansible_user={ssh_user}"]
+if become:
+    inventory_vars.append("ansible_become=true")
+
+inventory_path.write_text("[trusttunnel]\n{} {}\n".format(host, " ".join(inventory_vars)), encoding="utf-8")
+inventory_path.chmod(0o600)
+
+credentials_source = trusttunnel.get("existing_credentials_source", "") or ""
+credentials_file = trusttunnel.get("existing_credentials_file", "") or ""
+if credentials_source:
+    src = Path(credentials_source).expanduser()
+    if not src.is_file():
+        print(f"Error: existing_credentials_source does not exist: {src}", file=sys.stderr)
+        sys.exit(1)
+    credentials_dir.mkdir(parents=True, exist_ok=True)
+    dst_name = credentials_file or src.name
+    dst = credentials_dir / dst_name
+    shutil.copy2(src, dst)
+    dst.chmod(0o600)
+    credentials_file = dst_name
+
+public_address = trusttunnel.get("public_address") or f"{trusttunnel.get('domain', '')}:443"
+
+vars_data = {
+    "trusttunnel_domain": trusttunnel.get("domain", ""),
+    "trusttunnel_public_address": public_address,
+    "trusttunnel_cert_mode": trusttunnel.get("cert_mode", "letsencrypt"),
+    "trusttunnel_acme_email": trusttunnel.get("acme_email", ""),
+    "trusttunnel_existing_cert_chain_path": trusttunnel.get("existing_cert_chain_path", ""),
+    "trusttunnel_existing_private_key_path": trusttunnel.get("existing_private_key_path", ""),
+    "trusttunnel_open_firewall": bool(trusttunnel.get("open_firewall", False)),
+    "trusttunnel_firewall_backend": trusttunnel.get("firewall_backend", "auto"),
+    "trusttunnel_existing_credentials_file": credentials_file,
+    "trusttunnel_clients": trusttunnel.get("clients", []),
+}
+
+optional_keys = {
+    "install_version": "trusttunnel_install_version",
+    "client_config_format": "trusttunnel_client_config_format",
+    "prune_client_configs": "trusttunnel_prune_client_configs",
+    "generate_client_random_prefix": "trusttunnel_generate_client_random_prefix",
+    "dns_upstreams": "trusttunnel_dns_upstreams",
+    "rules": "trusttunnel_rules",
+    "monitoring_enabled": "trusttunnel_monitoring_enabled",
+    "monitoring_interval": "trusttunnel_monitoring_interval",
+    "monitoring_randomized_delay": "trusttunnel_monitoring_randomized_delay",
+    "monitoring_log_lines": "trusttunnel_monitoring_log_lines",
+    "monitoring_cert_warning_days": "trusttunnel_monitoring_cert_warning_days",
+    "monitoring_require_tcp": "trusttunnel_monitoring_require_tcp",
+    "monitoring_require_udp": "trusttunnel_monitoring_require_udp",
+    "monitoring_require_client_configs": "trusttunnel_monitoring_require_client_configs",
+}
+for src_key, dst_key in optional_keys.items():
+    if src_key in trusttunnel:
+        vars_data[dst_key] = trusttunnel[src_key]
+
+vault_data = {}
+ssh_password = asked_ssh_password or ansible.get("password", "")
+become_password = asked_become_password or ansible.get("become_password", "")
+
+if vault_enabled:
+    if ssh_password:
+        vault_data["ansible_password"] = ssh_password
+    if become_password:
+        vault_data["ansible_become_password"] = become_password
+else:
+    if ssh_password:
+        vars_data["ansible_password"] = ssh_password
+    if become_password:
+        vars_data["ansible_become_password"] = become_password
+
+vars_path.write_text(yaml.safe_dump(vars_data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+vars_path.chmod(0o600)
+
+if vault_enabled:
+    vault_path.write_text(yaml.safe_dump(vault_data or {}, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    vault_path.chmod(0o600)
+
+print(f"Generated {inventory_path}")
+print(f"Generated {vars_path}")
+if vault_enabled:
+    print(f"Generated plaintext {vault_path}; encrypting it next...")
+if credentials_file:
+    print(f"Imported credentials as roles/trusttunnel_endpoint/files/{credentials_file}")
+PY
+
+  if [ "$vault_enabled" = "true" ]; then
+    write_vault_password_file "$vault_password"
+    ansible-vault encrypt "$VAULT_FILE" --vault-password-file "$VAULT_PASSWORD_FILE" >/dev/null
+    echo "Encrypted $VAULT_FILE with Ansible Vault."
+  fi
+}
+
+run_playbook() {
+  playbook_name="$1"
+  shift
+
+  require_file "$INVENTORY_FILE"
+  require_file "$VARS_FILE"
+
+  if [ -f "$VAULT_FILE" ]; then
+    ensure_vault_password_file
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" -e "@${VAULT_FILE}" --vault-password-file "$VAULT_PASSWORD_FILE" "$@"
+  else
+    ansible-playbook -i "$INVENTORY_FILE" "${SCRIPT_DIR}/${playbook_name}" -e "@${VARS_FILE}" "$@"
+  fi
+}
+
+deploy() {
+  if [ -x "${SCRIPT_DIR}/deploy.sh" ]; then
+    if [ -f "$VAULT_FILE" ]; then
+      ensure_vault_password_file
+      ANSIBLE_VAULT_PASSWORD_FILE="$VAULT_PASSWORD_FILE" "${SCRIPT_DIR}/deploy.sh" "$@"
+    else
+      "${SCRIPT_DIR}/deploy.sh" "$@"
+    fi
+  else
+    run_playbook site.yml "$@"
+  fi
+}
+
+uninstall() {
+  if [ -x "${SCRIPT_DIR}/uninstall.sh" ]; then
+    if [ -f "$VAULT_FILE" ]; then
+      ensure_vault_password_file
+      ANSIBLE_VAULT_PASSWORD_FILE="$VAULT_PASSWORD_FILE" "${SCRIPT_DIR}/uninstall.sh" "$@"
+    else
+      "${SCRIPT_DIR}/uninstall.sh" "$@"
+    fi
+  else
+    run_playbook uninstall.yml "$@"
+  fi
+}
+
+status() {
+  status_mode="human"
+  log_lines="50"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --short)
+        status_mode="short"
+        shift
+        ;;
+      --json)
+        status_mode="json"
+        shift
+        ;;
+      --logs)
+        status_mode="logs"
+        shift
+        ;;
+      --clients)
+        status_mode="clients"
+        shift
+        ;;
+      --log-lines)
+        [ "$#" -ge 2 ] || fail "--log-lines requires a number"
+        log_lines="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "unknown status argument: $1"
+        ;;
+    esac
+  done
+
+  case "$log_lines" in
+    ''|*[!0-9]*) fail "--log-lines must be a positive integer" ;;
+  esac
+
+  require_file "$INVENTORY_FILE"
+  require_file "$VARS_FILE"
+  if [ -f "$VAULT_FILE" ]; then
+    ensure_vault_password_file
+  fi
+
+  status_output=$(mktemp /tmp/trusttunnel-ttctl-status.XXXXXX)
+  ansible_output=$(mktemp /tmp/trusttunnel-ttctl-ansible.XXXXXX)
+
+  if run_playbook status.yml \
+      -e "trusttunnel_status_mode=${status_mode}" \
+      -e "trusttunnel_status_log_lines=${log_lines}" \
+      -e "trusttunnel_status_output_file=${status_output}" \
+      >"$ansible_output" 2>&1; then
+    cat "$status_output"
+    rm -f "$status_output" "$ansible_output"
+  else
+    echo "Error: status diagnostics failed. Full Ansible output:" >&2
+    cat "$ansible_output" >&2
+    rm -f "$status_output" "$ansible_output"
+    exit 1
+  fi
+}
+
+resolve_client_operation_args() {
+  operation_name="$1"
+  default_input_file="$2"
+  shift 2
+
+  sync_from_server="auto"
+  apply_after="ask"
+  positional_count=0
+  input_file="$default_input_file"
+  credentials_file="$DEFAULT_CREDENTIALS_FILE"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --sync-from-server)
+        sync_from_server="yes"
+        shift
+        ;;
+      --no-sync-from-server)
+        sync_from_server="no"
+        shift
+        ;;
+      --apply|--deploy)
+        apply_after="yes"
+        shift
+        ;;
+      --no-apply|--no-deploy)
+        apply_after="no"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --*)
+        fail "unknown ${operation_name} argument: $1"
+        ;;
+      *)
+        positional_count=$((positional_count + 1))
+        case "$positional_count" in
+          1) input_file="$1" ;;
+          2) credentials_file="$1" ;;
+          *) fail "too many ${operation_name} positional arguments" ;;
+        esac
+        shift
+        ;;
+    esac
+  done
+
+  require_file "$input_file"
+
+  case "$apply_after" in
+    yes)
+      apply_to_server="true"
+      ;;
+    no)
+      apply_to_server="false"
+      ;;
+    ask)
+      if prompt_yes_no "Apply updated credentials to the server now? yes/no" "yes"; then
+        apply_to_server="true"
+      else
+        apply_to_server="false"
+      fi
+      ;;
+    *)
+      fail "invalid apply_after state: $apply_after"
+      ;;
+  esac
+}
+
+run_client_playbook() {
+  playbook_name="$1"
+  input_var_name="$2"
+  input_var_value="$3"
+  credentials_file="$4"
+
+  run_playbook "$playbook_name" \
+    -e "trusttunnel_sync_from_server=${sync_from_server}" \
+    -e "trusttunnel_apply_to_server=${apply_to_server}" \
+    -e "trusttunnel_credentials_local_file=${credentials_file}" \
+    -e "${input_var_name}=${input_var_value}"
+}
+
+add_client() {
+  resolve_client_operation_args "add-client" "$DEFAULT_NEW_CLIENTS_FILE" "$@"
+  run_client_playbook add_clients.yml trusttunnel_new_clients_file "$input_file" "$credentials_file"
+}
+
+remove_client() {
+  resolve_client_operation_args "remove-client" "$DEFAULT_REMOVE_CLIENTS_FILE" "$@"
+  run_client_playbook remove_clients.yml trusttunnel_remove_clients_file "$input_file" "$credentials_file"
+}
+
+import_credentials() {
+  [ "$#" -eq 1 ] || fail "import-credentials requires one path"
+  src="$1"
+  require_file "$src"
+  mkdir -p "$CREDENTIALS_FILES_DIR"
+  cp "$src" "${CREDENTIALS_FILES_DIR}/credentials.toml"
+  chmod 600 "${CREDENTIALS_FILES_DIR}/credentials.toml"
+  echo "Imported credentials to roles/trusttunnel_endpoint/files/credentials.toml"
+  echo "Set trusttunnel_existing_credentials_file: credentials.toml in vars.yml or deploy.yml."
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  init)
+    shift
+    init_from_config "$@"
+    ;;
+  deploy)
+    shift
+    deploy "$@"
+    ;;
+  status)
+    shift
+    status "$@"
+    ;;
+  add-client)
+    shift
+    add_client "$@"
+    ;;
+  remove-client)
+    shift
+    remove_client "$@"
+    ;;
+  import-credentials)
+    shift
+    import_credentials "$@"
+    ;;
+  uninstall)
+    shift
+    uninstall "$@"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    fail "unknown command: $cmd"
+    ;;
+esac

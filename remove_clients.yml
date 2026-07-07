@@ -1,0 +1,159 @@
+---
+- name: Remove TrustTunnel VPN clients after installation
+  hosts: trusttunnel
+  become: true
+  gather_facts: false
+
+  vars:
+    trusttunnel_install_dir: /opt/trusttunnel
+    trusttunnel_credentials_remote_file: "{{ trusttunnel_install_dir }}/credentials.toml"
+    trusttunnel_credentials_local_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/credentials.toml"
+    trusttunnel_remove_clients_file: "{{ playbook_dir }}/roles/trusttunnel_endpoint/files/remove_clients.txt"
+    trusttunnel_client_config_local_dir: "{{ playbook_dir }}/client_configs"
+    trusttunnel_effective_client_config_format: "{{ trusttunnel_client_config_format | default('toml') }}"
+    trusttunnel_sync_from_server: auto
+    trusttunnel_apply_to_server: true
+
+  pre_tasks:
+    - name: Check local remove clients file exists
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_remove_clients_file }}"
+      register: trusttunnel_local_remove_clients_file
+      delegate_to: localhost
+      become: false
+
+    - name: Validate local remove clients file
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_local_remove_clients_file.stat.exists
+        fail_msg: "Local remove clients file does not exist: {{ trusttunnel_remove_clients_file }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Check local credentials file exists
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_credentials_local_file }}"
+      register: trusttunnel_local_credentials_file
+      delegate_to: localhost
+      become: false
+
+    - name: Check TrustTunnel service is active before optional sync/apply
+      ansible.builtin.command:
+        cmd: systemctl is-active trusttunnel
+      register: trusttunnel_service_active
+      changed_when: false
+      failed_when: trusttunnel_service_active.rc != 0
+      when:
+        - trusttunnel_apply_to_server | bool or trusttunnel_sync_from_server in ['yes', 'auto']
+        - trusttunnel_sync_from_server == 'yes' or trusttunnel_apply_to_server | bool or not trusttunnel_local_credentials_file.stat.exists
+
+    - name: Fetch current server credentials when needed
+      ansible.builtin.fetch:
+        src: "{{ trusttunnel_credentials_remote_file }}"
+        dest: "{{ trusttunnel_credentials_local_file }}"
+        flat: true
+      when:
+        - trusttunnel_sync_from_server in ['yes', 'auto']
+        - trusttunnel_sync_from_server == 'yes' or not trusttunnel_local_credentials_file.stat.exists
+
+    - name: Re-check local credentials file after optional fetch
+      ansible.builtin.stat:
+        path: "{{ trusttunnel_credentials_local_file }}"
+      register: trusttunnel_local_credentials_file_after_fetch
+      delegate_to: localhost
+      become: false
+
+    - name: Validate local credentials file
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_local_credentials_file_after_fetch.stat.exists
+        fail_msg: "Local credentials file does not exist: {{ trusttunnel_credentials_local_file }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Remove requested users from local credentials file
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/remove_vpn_clients.sh"
+          - "{{ trusttunnel_remove_clients_file }}"
+          - "{{ trusttunnel_credentials_local_file }}"
+      environment:
+        TRUSTTUNNEL_DEPLOY_AFTER_REMOVE: "no"
+      delegate_to: localhost
+      become: false
+      register: trusttunnel_local_remove_clients_result
+      changed_when: "'Removed VPN client:' in trusttunnel_local_remove_clients_result.stderr"
+
+    - name: Parse usernames from remove clients file
+      ansible.builtin.set_fact:
+        trusttunnel_removed_client_usernames: >-
+          {{ lookup('ansible.builtin.file', trusttunnel_remove_clients_file)
+             | split('\n')
+             | map('regex_replace', '#.*$', '')
+             | map('trim')
+             | reject('equalto', '')
+             | unique
+             | list }}
+      delegate_to: localhost
+      become: false
+
+    - name: Validate parsed usernames
+      ansible.builtin.assert:
+        that:
+          - trusttunnel_removed_client_usernames | length > 0
+          - item is match('^[A-Za-z0-9_.@-]+$')
+        fail_msg: "Invalid or empty username in {{ trusttunnel_remove_clients_file }}: {{ item | default('') }}"
+      loop: "{{ trusttunnel_removed_client_usernames | default([]) }}"
+      delegate_to: localhost
+      become: false
+
+  tasks:
+    - name: Upload updated credentials file
+      ansible.builtin.copy:
+        src: "{{ trusttunnel_credentials_local_file }}"
+        dest: "{{ trusttunnel_credentials_remote_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        backup: true
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Restart TrustTunnel service to reload credentials
+      ansible.builtin.command:
+        cmd: systemctl restart trusttunnel
+      changed_when: true
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Verify TrustTunnel service is active after restart
+      ansible.builtin.command:
+        cmd: systemctl is-active trusttunnel
+      register: trusttunnel_service_active_after_restart
+      changed_when: false
+      failed_when: trusttunnel_service_active_after_restart.rc != 0
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Remove generated client configs on server
+      ansible.builtin.file:
+        path: "{{ trusttunnel_install_dir }}/client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
+        state: absent
+      loop: "{{ trusttunnel_removed_client_usernames }}"
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Remove fetched client configs on controller
+      ansible.builtin.file:
+        path: "{{ trusttunnel_client_config_local_dir }}/{{ inventory_hostname }}_client_{{ item }}.{{ trusttunnel_effective_client_config_format }}"
+        state: absent
+      loop: "{{ trusttunnel_removed_client_usernames }}"
+      delegate_to: localhost
+      become: false
+      when: trusttunnel_apply_to_server | bool
+
+    - name: Report removed client operation result
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['Updated local credentials file: ' ~ trusttunnel_credentials_local_file]
+             + (trusttunnel_apply_to_server | bool
+                | ternary(['Applied credentials file to ' ~ inventory_hostname,
+                           'Restarted TrustTunnel service to reload credentials',
+                           'Removed generated client config files for: ' ~ (trusttunnel_removed_client_usernames | join(', '))],
+                          ['Did not apply changes to server because trusttunnel_apply_to_server=false'])) }}

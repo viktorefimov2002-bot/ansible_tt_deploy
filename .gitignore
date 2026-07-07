@@ -1,6 +1,7 @@
 inventory.ini
 vars.yml
 vault.yml
+deploy.yml
 deploy.sh
 uninstall.sh
 deployment_info_*.md
