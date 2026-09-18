@@ -33,7 +33,7 @@
     that:
       - trusttunnel_existing_credentials_stat.stat.exists
       - trusttunnel_existing_credentials_stat.stat.isreg
-    fail_msg: "Existing credentials file must be placed at roles/trusttunnel_endpoint/files/{{ trusttunnel_existing_credentials_file }}."
+    fail_msg: "Existing credentials file must be placed at automation/ansible/roles/trusttunnel_endpoint/files/{{ trusttunnel_existing_credentials_file }}."
   when: trusttunnel_use_existing_credentials | bool
 
 - name: Read VPN usernames from existing TrustTunnel credentials

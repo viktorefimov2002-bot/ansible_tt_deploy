@@ -21,7 +21,7 @@ trusttunnel_clients:
 
 # Optional examples:
 # To reuse an existing TrustTunnel credentials file, place it under
-# roles/trusttunnel_endpoint/files/credentials.toml and set:
+# automation/ansible/roles/trusttunnel_endpoint/files/credentials.toml and set:
 # trusttunnel_existing_credentials_file: credentials.toml
 # trusttunnel_install_version: "1.0.33"
 # trusttunnel_client_config_format: deeplink

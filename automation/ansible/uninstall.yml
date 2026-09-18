@@ -1,0 +1,11 @@
+---
+- name: Remove TrustTunnel Endpoint
+  hosts: trusttunnel
+  become: true
+  gather_facts: true
+
+  vars:
+    trusttunnel_state: absent
+
+  roles:
+    - role: trusttunnel_endpoint

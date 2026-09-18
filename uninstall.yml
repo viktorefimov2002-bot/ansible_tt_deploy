@@ -1,11 +1,3 @@
 ---
-- name: Remove TrustTunnel Endpoint
-  hosts: trusttunnel
-  become: true
-  gather_facts: true
-
-  vars:
-    trusttunnel_state: absent
-
-  roles:
-    - role: trusttunnel_endpoint
+# Compatibility entry point. The implementation lives under automation/ansible/.
+- ansible.builtin.import_playbook: automation/ansible/uninstall.yml

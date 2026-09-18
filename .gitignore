@@ -11,3 +11,7 @@ roles/trusttunnel_endpoint/files/credentials.toml
 roles/trusttunnel_endpoint/files/new_clients.toml
 roles/trusttunnel_endpoint/files/remove_clients.txt
 create-tt-skills.sh
+
+automation/ansible/roles/trusttunnel_endpoint/files/credentials.toml
+automation/ansible/roles/trusttunnel_endpoint/files/new_clients.toml
+automation/ansible/roles/trusttunnel_endpoint/files/remove_clients.txt

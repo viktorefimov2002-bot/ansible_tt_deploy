@@ -1,0 +1,8 @@
+---
+- name: Install and configure TrustTunnel Endpoint
+  hosts: trusttunnel
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: trusttunnel_endpoint

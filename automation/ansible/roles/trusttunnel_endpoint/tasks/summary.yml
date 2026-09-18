@@ -1,7 +1,7 @@
 ---
 - name: Check local vault file for follow-up commands
   ansible.builtin.stat:
-    path: "{{ playbook_dir }}/vault.yml"
+    path: "{{ playbook_dir }}/../../vault.yml"
   register: trusttunnel_local_vault_file
   delegate_to: localhost
   become: false
@@ -14,7 +14,7 @@
 
 - name: Write TrustTunnel deployment summary on controller
   ansible.builtin.copy:
-    dest: "{{ playbook_dir }}/deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
+    dest: "{{ playbook_dir }}/../../deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
     mode: "0600"
     content: |
       # TrustTunnel deployment summary
@@ -110,6 +110,6 @@
 - name: Show TrustTunnel deployment summary path
   ansible.builtin.debug:
     msg:
-      - "Deployment summary saved locally to {{ playbook_dir }}/deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
-      - "Uninstall helper: {{ playbook_dir }}/uninstall.sh"
+      - "Deployment summary saved locally to {{ playbook_dir }}/../../deployment_info_{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}.md"
+      - "Uninstall helper: {{ playbook_dir }}/../../uninstall.sh"
       - "Manual uninstall command: ansible-playbook -i inventory.ini uninstall.yml {{ trusttunnel_followup_extra_vars }}"

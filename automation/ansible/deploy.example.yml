@@ -23,7 +23,7 @@ trusttunnel:
   firewall_backend: auto
 
   # To preserve clients from an existing server, set existing_credentials_source.
-  # ttctl will copy it to roles/trusttunnel_endpoint/files/ and set
+  # ttctl will copy it to automation/ansible/roles/trusttunnel_endpoint/files/ and set
   # trusttunnel_existing_credentials_file automatically.
   # existing_credentials_source: ./credentials.toml
   # existing_credentials_file: credentials.toml

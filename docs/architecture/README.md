@@ -10,7 +10,7 @@
 
 ## Текущая реализация
 
-На этапе TTCP-001 репозиторий содержит Ansible roles/playbooks и CLI `ttctl`: установку, настройку TLS/firewall, управление файловыми credentials, клиентскими конфигурациями и локальную диагностику. Эксплуатационные инструкции находятся в [корневом README](../../README.md), [P1 workflow](../P1_USABILITY.md) и [описании мониторинга](../MONITORING.md).
+На этапе TTCP-001 репозиторий содержит Ansible roles/playbooks и CLI `ttctl`: установку, настройку TLS/firewall, управление файловыми credentials, клиентскими конфигурациями и локальную диагностику. Эксплуатационные инструкции находятся в [Ansible README](../../automation/ansible/README.md), [P1 workflow](../../automation/ansible/docs/P1_USABILITY.md) и [описании мониторинга](../../automation/ansible/docs/MONITORING.md).
 
 Существующий `bootstrap.sh` относится к CLI/Ansible workflow. Будущий `bootstrap-node.sh` предназначен для подготовки управляемого узла; это отдельный, ещё не реализованный скрипт. Полный автоматический rollback Data Plane также пока не реализован; [существующее руководство rollback](../ROLLBACK.md) не подтверждает наличие этой функции.
 
