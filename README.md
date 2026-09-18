@@ -2,7 +2,8 @@
 
 Текущая реализация — Ansible/CLI для установки и обслуживания TrustTunnel Endpoint.
 Автоматизация находится в [automation/ansible](automation/ansible/README.md).
-Control Plane и его инфраструктура остаются планируемыми компонентами.
+Локальная инфраструктура Control Plane: [Docker Compose runtime](infra/compose/README.md)
+(TTCP-003). API и worker пока представлены заглушками; бизнес-логика не реализована.
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),
