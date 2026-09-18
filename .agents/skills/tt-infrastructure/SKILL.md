@@ -72,7 +72,7 @@ Do not place durable authoritative business data only in Redis.
 
 ## Redis
 
-Redis is the preferred MVP infrastructure for:
+In the target MVP architecture, Redis is the selected infrastructure for the following purposes. Verify its implementation and deployment status in the repository before relying on it:
 
 - asynchronous jobs;
 - coordination;

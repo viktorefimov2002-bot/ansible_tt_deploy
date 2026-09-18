@@ -25,7 +25,7 @@ Do not invent a new framework or architectural layer when the current codebase a
 
 ## Source of truth
 
-PostgreSQL is the durable source of truth for persistent business state.
+In the target MVP Control Plane, PostgreSQL is the durable source of truth for persistent business state. Verify whether the backend, persistence layer, migrations, and Redis adapters exist before relying on them.
 
 Redis may support:
 
@@ -61,11 +61,9 @@ Authorization must be enforced server-side.
 
 Do not rely on frontend visibility to protect privileged operations.
 
-## Client configuration rules
+## Device quota and per-server credentials
 
-Treat the current maximum of 3 configurations per user as a business invariant unless superseded by the specification.
-
-Enforce quota transactionally or otherwise safely against concurrent requests.
+Enforce the VPN user's device_limit, defaulting to 3 devices, transactionally or otherwise safely against concurrent requests. Do not hard-code 3 in quota checks. Per-server credentials/configurations for an existing device do not consume additional device quota.
 
 Do not depend solely on frontend checks.
 

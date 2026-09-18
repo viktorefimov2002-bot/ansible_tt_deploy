@@ -44,11 +44,11 @@ Test role boundaries including at least:
 - nonexistent object;
 - ownership/object-level authorization where applicable.
 
-## Client quota
+## Device quota
 
-When affected, verify the configuration quota around its boundary.
+When affected, test device creation at the user's device_limit boundary, including the default of 3 and a non-default value. Verify that credentials/configurations for multiple servers on an existing device do not consume additional device quota.
 
-Test concurrent or repeated creation when the storage/architecture makes races possible.
+Test concurrent or repeated device creation when the storage/architecture makes races possible.
 
 ## Redis-backed asynchronous workflows
 

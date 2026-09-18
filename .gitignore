@@ -10,3 +10,4 @@ client_configs/
 roles/trusttunnel_endpoint/files/credentials.toml
 roles/trusttunnel_endpoint/files/new_clients.toml
 roles/trusttunnel_endpoint/files/remove_clients.txt
+create-tt-skills.sh

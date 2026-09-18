@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository contains the TrustTunnel management platform and related infrastructure.
+This repository currently contains TrustTunnel Ansible/CLI automation and the specification for the target MVP management platform. Treat Control Plane services, PostgreSQL, Redis, workers, frontend applications, and Docker Compose as planned components unless their implementation is present in the repository.
 
 This file defines repository-wide working rules for Codex and other coding agents. Keep it concise. Domain-specific implementation guidance belongs in `.agents/skills/`, while architecture and product decisions belong in `docs/architecture/`.
 
@@ -42,9 +42,9 @@ For implementation work, combine `$tt-project-context` with the relevant role sk
 
 Do not load unrelated skills merely because they exist.
 
-## Current architectural invariants
+## Target MVP architectural invariants
 
-Unless the architecture specification explicitly changes them:
+These constraints govern the target MVP and its incremental implementation; they do not assert that the corresponding components already exist. Unless the architecture specification explicitly changes them:
 
 - Control Plane and Data Plane responsibilities remain separate.
 - Proxy responsibilities remain distinct from management responsibilities.
@@ -58,7 +58,7 @@ Unless the architecture specification explicitly changes them:
 - Authorization includes at least admin and viewer roles.
 - Viewer access must not mutate privileged state.
 - Client self-service is part of the product direction.
-- A user may have at most 3 active client configurations unless the specification changes this limit.
+- Each VPN user has a device_limit, defaulting to 3 devices. The quota applies to devices, not credentials or configurations. Each device may have separate credentials/configurations per server. Enforce device_limit rather than a hard-coded value of 3.
 - Administrative actions must be auditable where required by the specification.
 - Services should remain container-friendly and should not introduce unnecessary barriers to future Kubernetes migration.
 - Do not add Kubernetes complexity to the MVP unless a task explicitly requires it.

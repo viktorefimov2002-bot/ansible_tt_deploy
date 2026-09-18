@@ -10,9 +10,9 @@ Keep the current Product & Architecture Specification as a normal version-contro
 
 Skills intentionally do not duplicate the full specification.
 
-## Current infrastructure assumptions
+## Target MVP infrastructure requirements
 
-For MVP:
+The following describe the target MVP. The current implementation is Ansible/CLI automation; verify which components exist before using them. These requirements do not authorize introducing unrelated infrastructure in a task.
 
 - PostgreSQL is the durable source of truth.
 - Redis is used for asynchronous jobs, coordination, lightweight events, notifications, locks, and explicitly justified caching.

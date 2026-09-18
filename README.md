@@ -2,6 +2,8 @@
 
 Ansible-проект для быстрой установки и обслуживания TrustTunnel Endpoint на Linux-сервере.
 
+Документационная основа будущего Control Plane: [продукт](docs/product/product-spec-v0.1.md), [индекс архитектуры](docs/architecture/README.md), [ADR](docs/adr/README.md), [план MVP](docs/planning/mvp.md). Это целевая система; ниже описан текущий Ansible/CLI workflow.
+
 Проект умеет:
 
 - устанавливать TrustTunnel Endpoint;

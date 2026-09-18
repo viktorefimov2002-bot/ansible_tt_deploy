@@ -72,7 +72,7 @@ If no mechanism exists and one is required by the task, flag it as an architectu
 
 ## Redis
 
-Redis is MVP infrastructure for asynchronous jobs, lightweight events, notifications, coordination, locks, and possibly explicitly justified caching.
+In the target MVP architecture, Redis is intended for asynchronous jobs, lightweight events, notifications, coordination, locks, and explicitly justified caching. Apply the following requirements when Redis is introduced or affected by the task; do not assume it is already deployed.
 
 Security requirements:
 

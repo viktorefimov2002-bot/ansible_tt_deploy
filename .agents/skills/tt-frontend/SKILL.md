@@ -29,16 +29,16 @@ Do not imply that hiding a button provides security.
 
 ## Client self-service
 
-Make configuration lifecycle understandable:
+Make device and per-server configuration lifecycles understandable:
 
 - available configurations;
-- current quota;
+- device quota usage and device_limit returned by the backend;
 - creation state;
 - active/revoked/failed status;
 - download or enrollment action where applicable;
 - clear destructive-action confirmation.
 
-Respect the configured maximum number of client configurations per user.
+Respect the user's device_limit provided by the backend. Do not hard-code 3 or treat per-server configurations as additional devices.
 
 Handle backend quota conflicts correctly rather than assuming frontend state is current.
 

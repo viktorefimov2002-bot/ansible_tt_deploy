@@ -16,7 +16,7 @@ Before proposing architecture:
 1. Read the current Product & Architecture Specification.
 2. Inspect relevant existing code and repository structure.
 3. Identify the exact decision being made.
-4. Separate current MVP requirements from future scalability requirements.
+4. Distinguish the existing implementation, target MVP requirements, and future scalability requirements. Do not infer implementation status from the architecture specification.
 5. Prefer incremental evolution over speculative infrastructure.
 
 ## Required analysis

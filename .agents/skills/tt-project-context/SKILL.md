@@ -22,7 +22,7 @@ If the implementation and specification conflict, identify the conflict explicit
 
 ## Project invariants
 
-Treat these as current architectural constraints unless the repository specification explicitly supersedes them:
+The current implementation is Ansible/CLI automation. The following constraints describe the target MVP architecture, not an inventory of implemented components. Verify component availability in the repository before relying on it. Apply these constraints unless the repository specification explicitly supersedes them:
 
 - The system separates Control Plane and Data Plane responsibilities.
 - Proxy responsibilities are architecturally distinct from management responsibilities.
@@ -30,7 +30,7 @@ Treat these as current architectural constraints unless the repository specifica
 - MVP initially assumes a single operator.
 - Authorization includes at least admin and viewer roles.
 - Client self-service is part of the product direction.
-- A user may have at most 3 active client configurations unless the specification changes this limit.
+- The per-user device quota is defined by device_limit (default: 3), not by the number of credentials or configurations. Credentials belong to Device × Server pairs. Read the user's device_limit when enforcing the quota.
 - Server provisioning must support SSH password and SSH key flows.
 - Redis is the preferred MVP infrastructure for asynchronous jobs, coordination, lightweight event delivery, notifications, and distributed locks through project abstractions such as JobQueue, EventPublisher, and LockProvider.
 - PostgreSQL remains the durable source of truth.
