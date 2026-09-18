@@ -1,0 +1,8 @@
+**
+!apps/
+!apps/**
+!requirements-control-plane.lock
+apps/**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*

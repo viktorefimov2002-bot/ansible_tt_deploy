@@ -15,6 +15,13 @@ create-tt-skills.sh
 .env.*
 !.env.example
 *.dump
+.venv/
+.tools/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 
 automation/ansible/roles/trusttunnel_endpoint/files/credentials.toml
 automation/ansible/roles/trusttunnel_endpoint/files/new_clients.toml

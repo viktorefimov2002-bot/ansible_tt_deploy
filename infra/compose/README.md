@@ -1,4 +1,4 @@
-# Control Plane: локальный runtime (TTCP-003)
+# Control Plane: локальный runtime (TTCP-003/004)
 
 Основание: [архитектура](../../docs/architecture/product-architecture-spec-v0.1.md),
 разделы 4, 23–24, 28, 32–33, и [план MVP](../../docs/planning/mvp.md).
@@ -22,8 +22,8 @@ cp .env.example .env
 
 ```sh
 docker compose config --quiet
-docker compose pull
-docker compose up -d --wait --wait-timeout 180
+docker compose pull --ignore-buildable
+docker compose up -d --build --wait --wait-timeout 180
 docker compose ps
 docker compose logs --tail=100
 docker compose logs -f redis
@@ -32,10 +32,12 @@ docker compose start --wait
 docker compose down
 ```
 
-Локальных Dockerfile/build нет: используются готовые образы с явными версиями.
+API/worker собираются из `apps/Dockerfile`; Python dependencies зафиксированы в
+`requirements-control-plane.lock`. Остальные образы используют явные версии.
 `stop` и `down` сохраняют named volumes. `depends_on: service_healthy` управляет
 порядком старта, но не восстанавливает соединения приложений при последующих
-сбоях; это задача будущих клиентов БД/очереди. `unless-stopped` перезапускает
+сбоях; API/worker повторно проверяют подключения и восстанавливаются при возврате
+зависимостей. `unless-stopped` перезапускает
 завершившийся процесс, но само по себе состояние `unhealthy` не перезапускает его.
 
 ## Конфигурация
@@ -51,12 +53,14 @@ docker compose down
 | `HTTP_PORT` | `8080`, порт NGINX на loopback |
 | `GRAFANA_PORT` | `3000`, порт Grafana на loopback |
 | `VM_RETENTION` | `7d`, retention метрик |
+| `TTCP_LOG_LEVEL` | `INFO`, JSON application logs |
 
 `.env` игнорируется Git. Передавайте переменные через защищённое окружение
 при необходимости; не публикуйте вывод `docker compose config` без `--quiet`
 или `docker inspect`: они могут содержать секреты. Docker-администратор имеет
-доступ к environment контейнеров. API/worker-заглушки секретов не получают.
-Настоящие роли приложения с ограниченными правами добавляются вместе с БД/API.
+доступ к environment контейнеров. API/worker получают PostgreSQL/Redis credentials
+через общую секцию environment. Ограниченная application role остаётся TTCP-005;
+bootstrap использует существующую dev-role. Для production это требует пересмотра.
 
 PostgreSQL применяет `POSTGRES_*` только при первом запуске на пустом томе.
 Изменение `.env` не меняет пароль существующей роли и не переименовывает БД.
@@ -69,8 +73,8 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 | Сервис | Внутренний порт | Доступ с хоста | Сеть | Зависимости |
 | --- | --- | --- | --- | --- |
 | `nginx` | 8080 | `127.0.0.1:8080` | entrypoint, application | healthy api |
-| `api` (NGINX-заглушка) | 8080 | Нет | application, database, queue | healthy postgres, redis |
-| `worker` (idle-заглушка) | Нет | Нет | database, queue | healthy postgres, redis |
+| `api` (FastAPI) | 8080 | Нет | application, database, queue | healthy postgres, redis |
+| `worker` (bootstrap) | Нет | Нет | database, queue | healthy postgres, redis |
 | `postgres` | 5432 | Нет | database | Нет |
 | `redis` | 6379 | Нет | queue | Нет |
 | `victoriametrics` | 8428 | Нет | metrics | Нет |
@@ -79,12 +83,14 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 Все сети кроме `entrypoint` имеют `internal: true`. Сети database и queue
 доступны только соответствующему хранилищу и API/worker. NGINX и Grafana
 не подключены к ним. Сети не являются защитой от администратора Docker.
-API/worker пока ничего не читают из БД и Redis; сетевые подключения отражают
-целевую топологию. Доступ worker к managed nodes добавляется с execution adapter.
+API/worker проверяют SQL `SELECT 1` и Redis `PING`, без business state.
+Доступ worker к managed nodes добавляется с execution adapter.
 
-NGINX `/healthz` — HTTP 200; `/` и `/api/…` — намеренно HTTP 503 с пояснением.
-API `/healthz` проверяет только HTTP-процесс заглушки; healthcheck worker —
-только существование idle-процесса. Это не готовность будущего приложения.
+NGINX `/healthz` — HTTP 200; `/` — HTTP 503 до появления frontend.
+`/api/healthz` — liveness API; `/api/readyz` — HTTP 200 при доступности PostgreSQL
+и Redis, иначе 503. Несуществующие API routes — 404. Healthcheck API проверяет
+readiness; worker — подключения отдельным probe-процессом (не прогресс jobs).
+Контракты, settings и lifecycle описаны в [apps/README.md](../../apps/README.md).
 TLS/ACME, реальные UI bundles и публичный доступ не входят в локальный runtime.
 Для production потребуется отдельная настройка NGINX/TLS и секретов.
 
@@ -106,7 +112,7 @@ ACL требует пароль, сохраняет только его SHA-256 
 source of truth. Данные Redis теряются при пересоздании контейнера.
 
 Контейнеры ограничены по памяти: PostgreSQL/Redis/VictoriaMetrics — по 384 MiB,
-Grafana — 256 MiB, NGINX/API — по 64 MiB, worker — 32 MiB. Логи ротируются
+Grafana — 256 MiB, NGINX — 64 MiB, API — 192 MiB, worker — 128 MiB. Логи ротируются
 (3 × 10 MiB на контейнер). Для Docker Desktop выделите минимум 2 GiB памяти;
 для дальнейшего развития предпочтительны 4 GiB. Retention VM ограничивает время,
 но не абсолютный размер диска. Named volumes не заменяют резервную копию.
@@ -127,7 +133,8 @@ docker compose exec redis redis-cli ping
 docker compose exec victoriametrics wget -qO- http://127.0.0.1:8428/health
 docker compose exec grafana wget -qO- http://127.0.0.1:3000/api/health
 docker compose exec nginx nginx -t
-docker compose exec api nginx -t
+docker compose exec api python -m apps.shared.healthcheck api
+docker compose exec worker python -m apps.shared.healthcheck worker
 ```
 
 HTTP с хоста: `http://127.0.0.1:8080/healthz`; Grafana:
@@ -140,8 +147,9 @@ HTTP с хоста: `http://127.0.0.1:8080/healthz`; Grafana:
 bash infra/compose/tests/runtime_smoke.sh
 ```
 
-Тест создаёт отдельный проект `ttcp003-test-*`, временный env и собственные тома;
-проверяет отказ без секретов, HTTP-заглушки, Redis auth, VM, Grafana, SQL через TCP
+Тест создаёт отдельный проект `ttcp004-test-*`, временный env и собственные тома;
+проверяет startup/shutdown API и worker, readiness при сбое/восстановлении хранилищ,
+отказ без секретов, Redis auth, VM, Grafana, SQL через TCP
 и сохранение записи после пересоздания PostgreSQL. По завершении удаляет **только
 свой тестовый проект и его данные**. Основной `ttcp-dev` не затрагивается.
 
@@ -160,9 +168,10 @@ healthchecks должны быть проверены в Docker-окружени
 
 ## Границы задачи
 
-Нет FastAPI endpoints, auth/RBAC, схемы приложения/migrations, JobQueue,
+Нет business endpoints, auth/RBAC, схемы приложения/migrations, JobQueue,
 EventPublisher, LockProvider, Ansible adapter, CRUD, node bootstrap, VPN users/devices.
-Это TTCP-004–012 и последующие этапы. Kafka, Vault и Kubernetes не добавляются.
+Это TTCP-005–012 и последующие этапы. Worker library остаётся открытым ADR-решением
+для TTCP-007. Kafka, Vault и Kubernetes не добавляются.
 Новых архитектурных решений вне baseline нет; отдельный ADR для локальной
 конфигурации не требуется. Нумерованных принятых ADR пока нет в реестре.
 
