@@ -37,7 +37,28 @@ class DatabaseSettings(BaseSettings):
         return value
 
 
-class Settings(DatabaseSettings):
+class AuthSettings(DatabaseSettings):
+    auth_encryption_key: SecretStr | None = None
+    auth_session_seconds: int = Field(default=28800, ge=300, le=86400)
+
+    @field_validator("auth_encryption_key", mode="before")
+    @classmethod
+    def valid_auth_key(cls, value: SecretStr | str | None) -> SecretStr | None:
+        if value == "":
+            return None
+        if isinstance(value, str):
+            value = SecretStr(value)
+        if value is not None:
+            from cryptography.fernet import Fernet
+
+            try:
+                Fernet(value.get_secret_value().encode("ascii"))
+            except (ValueError, UnicodeError):
+                raise ValueError("must be a Fernet key") from None
+        return value
+
+
+class Settings(AuthSettings):
     redis_host: str = Field(min_length=1)
     redis_port: Port = 6379
     redis_password: SecretStr
@@ -73,6 +94,14 @@ def load_settings() -> Settings:
 def load_database_settings() -> DatabaseSettings:
     try:
         return DatabaseSettings()
+    except ValidationError as exc:
+        fields = sorted({"TTCP_" + str(e["loc"][0]).upper() for e in exc.errors()})
+        raise ConfigurationError("Missing or invalid configuration: " + ", ".join(fields)) from None
+
+
+def load_auth_settings() -> AuthSettings:
+    try:
+        return AuthSettings()
     except ValidationError as exc:
         fields = sorted({"TTCP_" + str(e["loc"][0]).upper() for e in exc.errors()})
         raise ConfigurationError("Missing or invalid configuration: " + ", ".join(fields)) from None

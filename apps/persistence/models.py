@@ -51,10 +51,23 @@ class Admin(Identity, Updated, Base):
     )
 
     username: Mapped[str] = mapped_column(String(128), unique=True)
-    # No default account or password; authentication is introduced in TTCP-006.
+    # No default account or password; offline bootstrap explicitly enrolls MFA.
     password_hash: Mapped[str | None] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(16), server_default="viewer")
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    totp_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    totp_last_step: Mapped[int | None] = mapped_column(Integer)
+    failed_logins: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    locked_until: Mapped[datetime | None]
+
+
+class AdminSession(Identity, Base):
+    __tablename__ = "admin_sessions"
+
+    admin_id: Mapped[UUID] = mapped_column(ForeignKey("admins.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None]
 
 
 class VpnUser(Identity, Updated, Base):

@@ -6,6 +6,11 @@
 SQLAlchemy models находятся в `apps/persistence/models.py`, Alembic — в `migrations/`.
 API/worker сохраняют bootstrap TTCP-004; бизнес-endpoints не добавлены.
 
+TTCP-006 добавляет [administrative authentication](authentication.md): MFA/lockout
+поля `admins` и таблицу `admin_sessions` (FK на admins, уникальный SHA-256 digest,
+expiry/revocation). Пароль остаётся nullable для unenrolled identities; такие записи
+не допускаются к login. Действующая миграция — `0003_admin_auth`.
+
 ## Состав baseline
 
 | Таблица | Назначение и ограничения |
@@ -85,7 +90,7 @@ Offline SQL не требует credentials. `alembic.ini` не содержит
 Приложения автоматически схему не создают и не изменяют, bootstrap readiness остаётся
 проверкой подключения, а не версии схемы.
 
-Порядок: `0001_core` → `0002_guards`. Upgrade выполняется транзакционно. Повторный
+Порядок: `0001_core` → `0002_guards` → `0003_admin_auth`. Upgrade выполняется транзакционно. Повторный
 `upgrade head` безопасен. Новые изменения — только следующей ревизией:
 
 ```sh

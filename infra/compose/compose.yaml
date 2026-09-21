@@ -84,7 +84,11 @@ services:
     build:
       context: ../..
       dockerfile: apps/Dockerfile
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      # Omit the key to keep the TTCP-004 health-only runtime; auth fails closed.
+      TTCP_AUTH_ENCRYPTION_KEY: ${TTCP_AUTH_ENCRYPTION_KEY:-}
+      TTCP_AUTH_SESSION_SECONDS: ${TTCP_AUTH_SESSION_SECONDS:-28800}
     command: [python, -m, apps.api]
     read_only: true
     cap_drop: [ALL]

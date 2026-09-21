@@ -10,16 +10,26 @@ anyio==4.15.1
     # via
     #   httpx
     #   starlette
+argon2-cffi==25.1.0
+    # via ttcp (pyproject.toml)
+argon2-cffi-bindings==26.1.0
+    # via argon2-cffi
 asyncpg==0.31.0
     # via ttcp (pyproject.toml)
 certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
+cffi==2.1.1
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 click==8.5.0
     # via uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
     # via pytest
+cryptography==48.0.1
+    # via ttcp (pyproject.toml)
 fastapi==0.141.1
     # via ttcp (pyproject.toml)
 greenlet==3.5.6
@@ -46,6 +56,8 @@ packaging==26.3
     # via pytest
 pluggy==1.6.0
     # via pytest
+pycparser==3.0 ; implementation_name != 'PyPy'
+    # via cffi
 pydantic==2.13.5
     # via
     #   fastapi
@@ -58,6 +70,8 @@ pygments==2.21.0
     # via pytest
 pyjwt==2.14.0
     # via redis
+pyotp==2.10.0
+    # via ttcp (pyproject.toml)
 pytest==8.4.2
     # via
     #   ttcp (pyproject.toml)

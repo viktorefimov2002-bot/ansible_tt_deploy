@@ -40,8 +40,12 @@ def config():
 
 def test_ordered_reproducible_offline_migrations():
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0002_guards"]
-    assert [r.revision for r in scripts.walk_revisions()] == ["0002_guards", "0001_core"]
+    assert scripts.get_heads() == ["0003_admin_auth"]
+    assert [r.revision for r in scripts.walk_revisions()] == [
+        "0003_admin_auth",
+        "0002_guards",
+        "0001_core",
+    ]
     outputs = []
     for _ in range(2):
         cfg = config()
@@ -362,6 +366,18 @@ async def test_runtime_role_can_write_but_cannot_alter_schema_or_audit(database)
                 if statement.strip():
                     await connection.execute(text(statement))
             await connection.execute(text(f'SET LOCAL ROLE "{role}"'))
+            operator = await connection.scalar(
+                text("INSERT INTO admins(username) VALUES ('session-owner') RETURNING id")
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO admin_sessions(admin_id,token_hash,expires_at) "
+                    "VALUES (:id,repeat('a',64),now()+interval '1 hour')"
+                ),
+                {"id": operator},
+            )
+            await connection.execute(text("UPDATE admin_sessions SET revoked_at=now()"))
+            await connection.execute(text("DELETE FROM admin_sessions"))
             user = await connection.scalar(
                 text("INSERT INTO vpn_users(display_name) VALUES ('runtime') RETURNING id")
             )
