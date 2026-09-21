@@ -11,13 +11,33 @@ x-runtime: &runtime
 x-app-environment: &app-environment
   TTCP_POSTGRES_HOST: postgres
   TTCP_POSTGRES_DB: ${POSTGRES_DB:-ttcp}
-  TTCP_POSTGRES_USER: ${POSTGRES_USER:-ttcp}
-  TTCP_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  TTCP_POSTGRES_USER: ${POSTGRES_APP_USER:-${POSTGRES_USER:-ttcp}}
+  TTCP_POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}}
   TTCP_REDIS_HOST: redis
   TTCP_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
   TTCP_LOG_LEVEL: ${TTCP_LOG_LEVEL:-INFO}
 
 services:
+  migrate:
+    profiles: [tools]
+    build:
+      context: ../..
+      dockerfile: apps/Dockerfile
+    environment:
+      TTCP_POSTGRES_HOST: postgres
+      TTCP_POSTGRES_DB: ${POSTGRES_DB:-ttcp}
+      TTCP_POSTGRES_USER: ${POSTGRES_USER:-ttcp}
+      TTCP_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    command: [python, -m, alembic, upgrade, head]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [database]
+    mem_limit: 128m
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     <<: *runtime
     image: postgres:17.11-alpine3.23

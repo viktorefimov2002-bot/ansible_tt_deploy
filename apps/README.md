@@ -1,11 +1,13 @@
-# Control Plane bootstrap — TTCP-004
+# Control Plane bootstrap и persistence — TTCP-004/005
 
 FastAPI API (`apps/api`), idle worker (`apps/worker`) и общие settings, JSON logs,
 PostgreSQL/Redis clients (`apps/shared`). Основание — разделы 4, 23, 28, 30, 33
 [архитектуры](../docs/architecture/product-architecture-spec-v0.1.md) и
 [план MVP](../docs/planning/mvp.md). Детальный scope TTCP-004 задан поручением:
-только application/bootstrap infrastructure. Domain models, migrations, auth,
-RBAC, CRUD, execution adapter, jobs и frontend отсутствуют.
+только application/bootstrap infrastructure. TTCP-005 добавляет SQLAlchemy core models,
+Alembic migrations и transaction helper в `apps/persistence`;
+[схема и команды](../docs/persistence.md). Auth, RBAC enforcement, CRUD, execution adapter,
+jobs и frontend отсутствуют.
 
 ## Запуск
 
@@ -79,8 +81,8 @@ HTTP headers и request bodies не логируются. Uvicorn access log в�
 
 ```sh
 python -m pytest -q
-python -m ruff check apps tests
-python -m ruff format --check apps tests
+python -m ruff check apps tests migrations
+python -m ruff format --check apps tests migrations
 bash infra/compose/tests/runtime_smoke.sh
 bash automation/ansible/tests/layout_smoke.sh
 ```
@@ -102,8 +104,9 @@ uv pip compile pyproject.toml --python-version 3.12 --universal --extra dev -o r
 Worker library не выбрана: отдельный ADR нужен перед реализацией TTCP-007.
 Текущий bootstrap использует только asyncio и не фиксирует broker API.
 JobQueue/EventPublisher/LockProvider появятся с соответствующими workflow.
-Миграции и ограниченная PostgreSQL application role — TTCP-005; в изолированном
-dev-stack пока используется существующая bootstrap role TTCP-003. TLS подключения
+Миграции и SQL grants ограниченной PostgreSQL application role описаны в
+[TTCP-005 persistence](../docs/persistence.md). В изолированном dev-stack без
+APP-переменных сохраняется bootstrap role TTCP-003. TLS подключения
 к хранилищам вне изолированной dev-сети потребует отдельной конфигурации.
 
 API lifecycle следует [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/),

@@ -5,9 +5,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from redis.asyncio import Redis
-from sqlalchemy import URL, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from apps.persistence.database import database_url
 from apps.shared.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -21,14 +22,7 @@ class Dependencies:
     def __init__(self, settings: Settings):
         self.timeout = settings.dependency_timeout
         self.engine = create_async_engine(
-            URL.create(
-                "postgresql+asyncpg",
-                username=settings.postgres_user,
-                password=settings.postgres_password.get_secret_value(),
-                host=settings.postgres_host,
-                port=settings.postgres_port,
-                database=settings.postgres_db,
-            ),
+            database_url(settings),
             pool_size=2,
             max_overflow=0,
             pool_timeout=self.timeout,

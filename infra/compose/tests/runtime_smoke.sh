@@ -17,6 +17,7 @@ umask 077
 # Clear inherited overrides; generate disposable credentials, never print them.
 unset POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD
 unset POSTGRES_DB POSTGRES_USER GRAFANA_ADMIN_USER HTTP_PORT GRAFANA_PORT VM_RETENTION
+unset POSTGRES_APP_USER POSTGRES_APP_PASSWORD
 unset TTCP_LOG_LEVEL
 touch "$TEST_DIR/runtime.env"
 if dc config --quiet >/dev/null 2>&1; then
@@ -30,6 +31,10 @@ unset value
 printf 'HTTP_PORT=0\nGRAFANA_PORT=0\n' >> "$TEST_DIR/runtime.env"
 dc config --quiet
 dc up -d --build --wait --wait-timeout 180
+# Explicit deployment step, never performed automatically by API/worker startup.
+dc run --rm --no-deps migrate
+dc run --rm --no-deps migrate
+dc run --rm --no-deps migrate python -m alembic check
 dc exec -T nginx nginx -t
 dc exec -T api python -m apps.shared.healthcheck api
 dc exec -T worker python -m apps.shared.healthcheck worker

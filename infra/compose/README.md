@@ -1,4 +1,4 @@
-# Control Plane: локальный runtime (TTCP-003/004)
+# Control Plane: локальный runtime (TTCP-003/004/005)
 
 Основание: [архитектура](../../docs/architecture/product-architecture-spec-v0.1.md),
 разделы 4, 23–24, 28, 32–33, и [план MVP](../../docs/planning/mvp.md).
@@ -23,6 +23,8 @@ cp .env.example .env
 ```sh
 docker compose config --quiet
 docker compose pull --ignore-buildable
+docker compose up -d --wait postgres
+docker compose run --rm --build migrate
 docker compose up -d --build --wait --wait-timeout 180
 docker compose ps
 docker compose logs --tail=100
@@ -47,6 +49,7 @@ API/worker собираются из `apps/Dockerfile`; Python dependencies за
 | `POSTGRES_DB` | `ttcp`, начальная БД |
 | `POSTGRES_USER` | `ttcp`, bootstrap superuser только для локального runtime |
 | `POSTGRES_PASSWORD` | Обязательный секрет, без значения по умолчанию |
+| `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD` | Необязательная пара для отдельной runtime role; без неё dev fallback на bootstrap owner |
 | `REDIS_PASSWORD` | Обязательный секрет, без значения по умолчанию |
 | `GRAFANA_ADMIN_USER` | `admin`, начальный администратор Grafana |
 | `GRAFANA_ADMIN_PASSWORD` | Обязательный секрет, без значения по умолчанию |
@@ -59,8 +62,9 @@ API/worker собираются из `apps/Dockerfile`; Python dependencies за
 при необходимости; не публикуйте вывод `docker compose config` без `--quiet`
 или `docker inspect`: они могут содержать секреты. Docker-администратор имеет
 доступ к environment контейнеров. API/worker получают PostgreSQL/Redis credentials
-через общую секцию environment. Ограниченная application role остаётся TTCP-005;
-bootstrap использует существующую dev-role. Для production это требует пересмотра.
+через общую секцию environment. TTCP-005 добавляет отдельный migrator и
+[grants/runbook runtime role](../../docs/persistence.md). Без APP-переменных bootstrap
+сохраняет dev-owner; для эксплуатации настройте отдельную ограниченную роль.
 
 PostgreSQL применяет `POSTGRES_*` только при первом запуске на пустом томе.
 Изменение `.env` не меняет пароль существующей роли и не переименовывает БД.
@@ -76,6 +80,7 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 | `api` (FastAPI) | 8080 | Нет | application, database, queue | healthy postgres, redis |
 | `worker` (bootstrap) | Нет | Нет | database, queue | healthy postgres, redis |
 | `postgres` | 5432 | Нет | database | Нет |
+| `migrate` (одноразовый tools profile) | Нет | Нет | database | healthy postgres |
 | `redis` | 6379 | Нет | queue | Нет |
 | `victoriametrics` | 8428 | Нет | metrics | Нет |
 | `grafana` | 3000 | `127.0.0.1:3000` | entrypoint, metrics | healthy victoriametrics |
@@ -168,9 +173,10 @@ healthchecks должны быть проверены в Docker-окружени
 
 ## Границы задачи
 
-Нет business endpoints, auth/RBAC, схемы приложения/migrations, JobQueue,
-EventPublisher, LockProvider, Ansible adapter, CRUD, node bootstrap, VPN users/devices.
-Это TTCP-005–012 и последующие этапы. Worker library остаётся открытым ADR-решением
+Есть core PostgreSQL schema/migrations; [границы baseline](../../docs/persistence.md).
+Нет business endpoints, auth/RBAC enforcement, JobQueue, EventPublisher, LockProvider,
+Ansible adapter, CRUD, node bootstrap и VPN lifecycle.
+Это TTCP-006–012 и последующие этапы. Worker library остаётся открытым ADR-решением
 для TTCP-007. Kafka, Vault и Kubernetes не добавляются.
 Новых архитектурных решений вне baseline нет; отдельный ADR для локальной
 конфигурации не требуется. Нумерованных принятых ADR пока нет в реестре.

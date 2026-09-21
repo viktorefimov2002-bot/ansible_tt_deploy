@@ -2,6 +2,9 @@
 !apps/
 !apps/**
 !requirements-control-plane.lock
+!alembic.ini
+!migrations/
+!migrations/**
 apps/**/__pycache__/
 **/*.py[cod]
 **/.env

@@ -4,5 +4,7 @@ WORKDIR /app
 COPY requirements-control-plane.lock ./
 RUN pip install --no-cache-dir -r requirements-control-plane.lock
 COPY apps ./apps
+COPY alembic.ini ./
+COPY migrations ./migrations
 USER 65534:65534
 CMD ["python", "-m", "apps.api"]

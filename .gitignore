@@ -21,6 +21,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+!alembic.ini
 *.egg-info/
 
 automation/ansible/roles/trusttunnel_endpoint/files/credentials.toml
