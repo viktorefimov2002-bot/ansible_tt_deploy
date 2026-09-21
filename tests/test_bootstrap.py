@@ -122,6 +122,10 @@ async def test_probes_timeout_redact_and_recover(settings, monkeypatch, caplog):
 
 
 async def test_worker_stop_closes_resources(settings, monkeypatch, caplog):
+    async def consume(self, stop):
+        await stop.wait()
+
+    monkeypatch.setattr("apps.worker.__main__.Worker.run", consume)
     dependencies = AsyncMock()
     entered = asyncio.Event()
     closed = []
@@ -159,6 +163,10 @@ def test_structured_logging_omits_exception_and_unapproved_fields():
 
 
 async def test_worker_monitors_loss_and_recovery(settings, monkeypatch, caplog):
+    async def consume(self, stop):
+        await stop.wait()
+
+    monkeypatch.setattr("apps.worker.__main__.Worker.run", consume)
     stop = asyncio.Event()
     calls = 0
 

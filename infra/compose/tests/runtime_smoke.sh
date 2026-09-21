@@ -30,15 +30,41 @@ done
 unset value
 printf 'HTTP_PORT=0\nGRAFANA_PORT=0\n' >> "$TEST_DIR/runtime.env"
 dc config --quiet
-dc up -d --build --wait --wait-timeout 180
+dc up -d --wait --wait-timeout 180 postgres redis
+dc build api worker migrate
 # Explicit deployment step, never performed automatically by API/worker startup.
 dc run --rm --no-deps migrate
 dc run --rm --no-deps migrate
 dc run --rm --no-deps migrate python -m alembic check
+dc up -d --build --wait --wait-timeout 180
 dc exec -T nginx nginx -t
 dc exec -T api python -m apps.shared.healthcheck api
 dc exec -T worker python -m apps.shared.healthcheck worker
 sql() { dc exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At' ; }
+
+# Use only this disposable project's database/Redis. No public job creation API.
+create_job() {
+    printf "INSERT INTO jobs(type,target_type,request_id,idempotency_key,replay_safe,cancellable) VALUES ('internal.noop','internal','compose-smoke',gen_random_uuid()::text,true,true) RETURNING id;\n" | sql | sed -n '1p'
+}
+wait_job() {
+    for attempt in $(seq 1 30); do
+        state=$(printf "SELECT status FROM jobs WHERE id='%s';\n" "$1" | sql)
+        if [ "$state" = succeeded ]; then return; fi
+        if [ "$state" = failed ]; then echo 'FAIL: internal job failed' >&2; exit 1; fi
+        sleep 1
+    done
+    echo 'FAIL: durable job did not complete' >&2; exit 1
+}
+job_id=$(create_job)
+wait_job "$job_id"
+dc stop worker
+job_id=$(create_job)
+dc exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli LPUSH ttcp:jobs:queue "$1"' sh "$job_id" >/dev/null
+dc up -d --force-recreate --no-deps --wait --wait-timeout 120 redis
+dc up -d --wait --wait-timeout 120 worker
+wait_job "$job_id"
+test "$(printf "SELECT attempts FROM jobs WHERE id='%s';\n" "$job_id" | sql)" = 1
+test "$(dc exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli XLEN "ttcp:jobs:log:$1"' sh "$job_id")" -gt 0
 printf 'CREATE TABLE runtime_probe (value text); INSERT INTO runtime_probe VALUES ($$persistent$$);\n' | sql
 dc up -d --force-recreate --no-deps --wait --wait-timeout 120 postgres
 test "$(printf 'SELECT value FROM runtime_probe;\n' | sql)" = persistent
@@ -93,4 +119,4 @@ for service in api worker; do
     dc logs "$service" | grep -q "${service}_stopped"
 done
 dc ps
-echo 'PASS: bootstrap, readiness recovery, shutdown, auth, PostgreSQL persistence, monitoring'
+echo 'PASS: bootstrap, jobs, Redis loss recovery, shutdown, auth, PostgreSQL persistence, monitoring'

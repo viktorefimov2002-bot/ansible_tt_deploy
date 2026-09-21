@@ -1,13 +1,14 @@
 # Control Plane bootstrap и persistence — TTCP-004/005
 
-FastAPI API (`apps/api`), idle worker (`apps/worker`) и общие settings, JSON logs,
+FastAPI API (`apps/api`), job worker (`apps/worker`) и общие settings, JSON logs,
 PostgreSQL/Redis clients (`apps/shared`). Основание — разделы 4, 23, 28, 30, 33
 [архитектуры](../docs/architecture/product-architecture-spec-v0.1.md) и
 [план MVP](../docs/planning/mvp.md). Детальный scope TTCP-004 задан поручением:
 только application/bootstrap infrastructure. TTCP-005 добавляет SQLAlchemy core models,
 Alembic migrations и transaction helper в `apps/persistence`;
 [схема и команды](../docs/persistence.md). CRUD, execution adapter,
-jobs и frontend отсутствуют. TTCP-006 добавляет административную аутентификацию и RBAC;
+и frontend отсутствуют. TTCP-007 добавляет [durable jobs и SSE logs](../docs/jobs.md).
+TTCP-006 добавляет административную аутентификацию и RBAC;
 см. [настройку и HTTP-контракт](../docs/authentication.md).
 
 ## Запуск
@@ -66,9 +67,9 @@ Readiness не раскрывает адреса, имена БД, credentials �
 `/healthz` NGINX проверяет только NGINX; для приложения используйте `/api/readyz`.
 
 Worker ждёт SIGTERM/SIGINT, периодически проверяет подключения и логирует изменения
-готовности. Это мониторинг bootstrap, а не планировщик business jobs. Healthcheck
+готовности и исполняет durable jobs согласно [контракту worker](../docs/jobs.md). Healthcheck
 worker запускает отдельную проверку подключений; он **не доказывает прогресс job
-consumer**, которого ещё нет. Контейнер проверяет завершение основного процесса.
+consumer**. Контейнер проверяет завершение основного процесса.
 API использует FastAPI lifespan; shutdown закрывает Redis и SQLAlchemy pools.
 Worker закрывает их при stop и startup failure. Compose даёт 30 s на остановку.
 Uvicorn может повторно поднять SIGTERM после cleanup: код 143 вместе с событием
@@ -102,9 +103,9 @@ uv pip compile pyproject.toml --python-version 3.12 --universal --extra dev -o r
 
 ## Открытые решения
 
-Worker library не выбрана: отдельный ADR нужен перед реализацией TTCP-007.
-Текущий bootstrap использует только asyncio и не фиксирует broker API.
-JobQueue/EventPublisher/LockProvider появятся с соответствующими workflow.
+Worker использует asyncio/redis-py за JobQueue/EventPublisher, с durable state и
+координацией в PostgreSQL: [ADR-0013](../docs/adr/0013-durable-job-worker.md).
+Redis LockProvider пока не требуется.
 Миграции и SQL grants ограниченной PostgreSQL application role описаны в
 [TTCP-005 persistence](../docs/persistence.md). В изолированном dev-stack без
 APP-переменных сохраняется bootstrap role TTCP-003. TLS подключения

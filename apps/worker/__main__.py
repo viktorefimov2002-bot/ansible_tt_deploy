@@ -1,9 +1,12 @@
-"""Idle bootstrap with connectivity monitoring; no job scheduler or broker library."""
+"""Durable job worker with connectivity monitoring and graceful shutdown."""
 
 import asyncio
 import logging
 import signal
 
+from apps.jobs.redis import RedisTransport
+from apps.jobs.service import JobService
+from apps.jobs.worker import Worker
 from apps.shared.config import ConfigurationError, Settings, load_settings
 from apps.shared.dependencies import DependencyUnavailable, connected_dependencies
 from apps.shared.logging import configure_logging
@@ -14,12 +17,17 @@ logger = logging.getLogger(__name__)
 async def run(settings: Settings, stop: asyncio.Event):
     async with connected_dependencies(settings) as dependencies:
         logger.info("worker_started")
+        transport = RedisTransport(dependencies.redis)
+        worker = Worker(JobService(dependencies.engine, transport, transport))
+        consumer = asyncio.create_task(worker.run(stop))
         previous = True
         try:
             while not stop.is_set():
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=settings.worker_check_interval)
                 except TimeoutError:
+                    if consumer.done():
+                        await consumer
                     healthy = all((await dependencies.check()).values())
                     if healthy != previous:
                         logger.info(
@@ -29,6 +37,8 @@ async def run(settings: Settings, stop: asyncio.Event):
                         previous = healthy
         finally:
             logger.info("worker_stopping")
+            stop.set()
+            await consumer
     logger.info("worker_stopped")
 
 

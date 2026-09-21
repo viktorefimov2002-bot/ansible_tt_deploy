@@ -78,7 +78,7 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 | --- | --- | --- | --- | --- |
 | `nginx` | 8080 | `127.0.0.1:8080` | entrypoint, application | healthy api |
 | `api` (FastAPI) | 8080 | Нет | application, database, queue | healthy postgres, redis |
-| `worker` (bootstrap) | Нет | Нет | database, queue | healthy postgres, redis |
+| `worker` (durable jobs) | Нет | Нет | database, queue | healthy postgres, redis |
 | `postgres` | 5432 | Нет | database | Нет |
 | `migrate` (одноразовый tools profile) | Нет | Нет | database | healthy postgres |
 | `redis` | 6379 | Нет | queue | Нет |
@@ -88,7 +88,7 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 Все сети кроме `entrypoint` имеют `internal: true`. Сети database и queue
 доступны только соответствующему хранилищу и API/worker. NGINX и Grafana
 не подключены к ним. Сети не являются защитой от администратора Docker.
-API/worker проверяют SQL `SELECT 1` и Redis `PING`, без business state.
+Readiness API/worker проверяет SQL `SELECT 1` и Redis `PING`; worker исполняет [durable jobs](../../docs/jobs.md).
 Доступ worker к managed nodes добавляется с execution adapter.
 
 NGINX `/healthz` — HTTP 200; `/` — HTTP 503 до появления frontend.
@@ -112,8 +112,8 @@ Redis использует tmpfs, без RDB/AOF. `maxmemory=256mb`, `noeviction
 ACL требует пароль, сохраняет только его SHA-256 в tmpfs; исходный пароль
 не передаётся в аргументах redis-server. Начальная ACL разрешает все команды
 аутентифицированному клиенту в изолированной dev-сети. Разделение ACL/TTL и
-поведение при утрате очереди определяются TTCP-007. До внедрения jobs необходимо
-реализовать восстановление из PostgreSQL и решить, нужна ли AOF; Redis не является
+поведение при утрате очереди описаны в [TTCP-007](../../docs/jobs.md): worker восстанавливает
+очередь из PostgreSQL, Redis streams имеют TTL и bounded retention; AOF не требуется. Redis не является
 source of truth. Данные Redis теряются при пересоздании контейнера.
 
 Контейнеры ограничены по памяти: PostgreSQL/Redis/VictoriaMetrics — по 384 MiB,
@@ -174,10 +174,10 @@ healthchecks должны быть проверены в Docker-окружени
 ## Границы задачи
 
 Есть core PostgreSQL schema/migrations; [границы baseline](../../docs/persistence.md).
-Нет business endpoints, auth/RBAC enforcement, JobQueue, EventPublisher, LockProvider,
-Ansible adapter, CRUD, node bootstrap и VPN lifecycle.
-Это TTCP-006–012 и последующие этапы. Worker library остаётся открытым ADR-решением
-для TTCP-007. Kafka, Vault и Kubernetes не добавляются.
+Ansible adapter, server/VPN CRUD, node bootstrap и VPN lifecycle пока не реализованы.
+Аутентификация реализована в TTCP-006, jobs — в TTCP-007;
+[ADR-0013](../../docs/adr/0013-durable-job-worker.md) описывает выбор worker.
+Kafka, Vault и Kubernetes не добавляются.
 Новых архитектурных решений вне baseline нет; отдельный ADR для локальной
 конфигурации не требуется. Нумерованных принятых ADR пока нет в реестре.
 

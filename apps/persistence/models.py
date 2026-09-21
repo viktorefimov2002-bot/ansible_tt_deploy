@@ -202,3 +202,49 @@ class AuditEvent(Identity, Base):
     request_id: Mapped[str | None] = mapped_column(String(128), index=True)
     result: Mapped[str] = mapped_column(String(32))
     details: Mapped[dict] = mapped_column("metadata", JSONB, server_default=text("'{}'::jsonb"))
+
+
+class Job(Identity, Updated, Base):
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','failed','cancelled')", name="status"
+        ),
+        CheckConstraint("progress BETWEEN 0 AND 100", name="progress"),
+        CheckConstraint(
+            "attempts BETWEEN 0 AND max_attempts AND max_attempts BETWEEN 1 AND 5", name="attempts"
+        ),
+        CheckConstraint("jsonb_array_length(history) <= 200", name="history_bound"),
+        CheckConstraint(
+            "(status = 'running') = (claim_token IS NOT NULL AND lease_until IS NOT NULL)",
+            name="claim",
+        ),
+        CheckConstraint(
+            "(status IN ('succeeded','failed','cancelled')) = (finished_at IS NOT NULL)",
+            name="finished",
+        ),
+    )
+
+    type: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[UUID | None]
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("admins.id"))
+    request_id: Mapped[str] = mapped_column(String(128))
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)
+    status: Mapped[str] = mapped_column(String(16), server_default="queued", index=True)
+    progress: Mapped[int] = mapped_column(server_default=text("0"))
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))
+    max_attempts: Mapped[int] = mapped_column(server_default=text("3"))
+    replay_safe: Mapped[bool] = mapped_column(server_default=text("false"))
+    cancellable: Mapped[bool] = mapped_column(server_default=text("false"))
+    available_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+    dispatch_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+    started_at: Mapped[datetime | None]
+    finished_at: Mapped[datetime | None]
+    cancel_requested_at: Mapped[datetime | None]
+    claim_token: Mapped[UUID | None]
+    lease_until: Mapped[datetime | None] = mapped_column(index=True)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(255))
+    log_sequence: Mapped[int] = mapped_column(server_default=text("0"))
+    history: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
