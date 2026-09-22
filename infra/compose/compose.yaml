@@ -113,9 +113,12 @@ services:
     build:
       context: ../..
       dockerfile: apps/Dockerfile
+      target: worker
     environment: *app-environment
     command: [python, -m, apps.worker]
     read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     networks: [database, queue]

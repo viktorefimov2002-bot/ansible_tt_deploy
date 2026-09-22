@@ -4,11 +4,17 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from apps.jobs.ports import TransportUnavailable
-from apps.jobs.service import CancellationRequested, JobService, LostClaim
+from apps.jobs.service import EXECUTION_FAILURES, CancellationRequested, JobService, LostClaim
 
 
 class RetryableError(Exception):
     """A handler explicitly classifies a failure; exception text is never persisted."""
+
+
+class ExecutionFailure(Exception):
+    def __init__(self, code: str):
+        self.code = code if code in EXECUTION_FAILURES else "handler_failed"
+        super().__init__(self.code)
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,8 @@ class Worker:
             code, retryable = "timeout", True
         except RetryableError:
             code, retryable = "handler_failed", True
+        except ExecutionFailure as exc:
+            code = exc.code
         except asyncio.CancelledError:
             code = "shutdown" if job.replay_safe else "unsafe_outcome"
             try:

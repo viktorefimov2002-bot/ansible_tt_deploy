@@ -2,6 +2,12 @@
 !apps/
 !apps/**
 !requirements-control-plane.lock
+!requirements-execution.lock
+!automation/
+!automation/ansible/
+!automation/ansible/status.yml
+!automation/ansible/group_vars/
+!automation/ansible/group_vars/all.yml
 !alembic.ini
 !migrations/
 !migrations/**

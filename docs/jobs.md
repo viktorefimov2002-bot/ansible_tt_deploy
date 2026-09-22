@@ -3,7 +3,8 @@
 Implementation: `apps/jobs/`, `apps/worker/`, `apps/api/jobs.py`, migration `0004_jobs`.
 Worker choice and tradeoffs: [ADR-0013](adr/0013-durable-job-worker.md), Proposed.
 PostgreSQL is authoritative; Redis queue entries contain UUIDs only. No public
-job-creation endpoint exists. The only bundled handler is `internal.noop`.
+job-creation endpoint exists. Bundled handlers include `internal.noop` and
+`internal.execution.validate`; see [TTCP-008 execution integration](execution.md).
 
 ## Lifecycle and recovery
 
@@ -77,7 +78,8 @@ database failures. No connection holds a database session while waiting.
 
 Initial logs accept reviewed event codes only, with fixed safe messages and numeric
 progress. Raw exceptions, arbitrary handler payloads, SSH output and credentials
-are never copied into them. Rich remote-output sanitization belongs with TTCP-008.
+are never copied into them. TTCP-008 adds reviewed execution event codes and
+suppresses raw output rather than attempting incomplete free-text redaction.
 
 ## Deploy and validate
 

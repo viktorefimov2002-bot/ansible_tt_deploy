@@ -26,7 +26,37 @@ MESSAGES = {
     "shutdown": "Worker stopped during execution",
     "unknown_handler": "Handler is unavailable or its policy changed",
     "unsafe_outcome": "Execution outcome requires reconciliation",
+    "execution_started": "Execution started",
+    "execution_task_ok": "Remote task completed",
+    "execution_task_failed": "Remote task failed",
+    "execution_task_skipped": "Remote task skipped",
+    "execution_output_suppressed": "Unstructured process output suppressed",
+    "execution_failed": "Execution process failed",
+    "execution_unreachable": "Execution target unreachable",
+    "execution_timeout": "Execution deadline exceeded; local processes stopped",
+    "execution_unavailable": "Execution runtime unavailable",
+    "execution_invalid": "Execution input or target is invalid",
 }
+
+EXECUTION_EVENTS = frozenset(
+    {
+        "execution_started",
+        "execution_task_ok",
+        "execution_task_failed",
+        "execution_task_skipped",
+        "execution_output_suppressed",
+        "execution_unreachable",
+    }
+)
+EXECUTION_FAILURES = frozenset(
+    {
+        "execution_failed",
+        "execution_unreachable",
+        "execution_timeout",
+        "execution_unavailable",
+        "execution_invalid",
+    }
+)
 
 
 class LostClaim(Exception):
@@ -194,6 +224,23 @@ class JobService:
         ):
             raise LostClaim
         return job, now
+
+    async def execution_event(self, job_id: UUID, token: UUID, code: str):
+        if code not in EXECUTION_EVENTS:
+            raise ValueError("Unsupported execution event")
+        async with transaction(self.engine) as db:
+            job, now = await self._owned(db, job_id, token)
+            if job.cancel_requested_at:
+                raise CancellationRequested
+            event = record(job, code, now)
+        await self.publish(job_id, event)
+
+    async def check_execution(self, job_id: UUID, token: UUID):
+        """Fence/cancel a silent subprocess without filling the log with polling."""
+        async with transaction(self.engine) as db:
+            job, _ = await self._owned(db, job_id, token)
+            if job.cancel_requested_at:
+                raise CancellationRequested
 
     def _failure(self, job, now, code, retryable, *, acknowledge_cancel=True):
         job.error_code, job.error_message = code, MESSAGES[code]

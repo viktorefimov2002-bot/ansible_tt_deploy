@@ -4,9 +4,11 @@ import asyncio
 import logging
 import signal
 
+from apps.execution.ansible import AnsibleExecutionAdapter
+from apps.execution.jobs import execution_handlers
 from apps.jobs.redis import RedisTransport
 from apps.jobs.service import JobService
-from apps.jobs.worker import Worker
+from apps.jobs.worker import HANDLERS, Worker
 from apps.shared.config import ConfigurationError, Settings, load_settings
 from apps.shared.dependencies import DependencyUnavailable, connected_dependencies
 from apps.shared.logging import configure_logging
@@ -18,7 +20,10 @@ async def run(settings: Settings, stop: asyncio.Event):
     async with connected_dependencies(settings) as dependencies:
         logger.info("worker_started")
         transport = RedisTransport(dependencies.redis)
-        worker = Worker(JobService(dependencies.engine, transport, transport))
+        worker = Worker(
+            JobService(dependencies.engine, transport, transport),
+            {**HANDLERS, **execution_handlers(AnsibleExecutionAdapter())},
+        )
         consumer = asyncio.create_task(worker.run(stop))
         previous = True
         try:

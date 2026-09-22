@@ -6,8 +6,9 @@ PostgreSQL/Redis clients (`apps/shared`). Основание — разделы 
 [план MVP](../docs/planning/mvp.md). Детальный scope TTCP-004 задан поручением:
 только application/bootstrap infrastructure. TTCP-005 добавляет SQLAlchemy core models,
 Alembic migrations и transaction helper в `apps/persistence`;
-[схема и команды](../docs/persistence.md). CRUD, execution adapter,
-и frontend отсутствуют. TTCP-007 добавляет [durable jobs и SSE logs](../docs/jobs.md).
+[схема и команды](../docs/persistence.md). CRUD и frontend отсутствуют.
+TTCP-008 добавляет [execution adapter](../docs/execution.md).
+TTCP-007 добавляет [durable jobs и SSE logs](../docs/jobs.md).
 TTCP-006 добавляет административную аутентификацию и RBAC;
 см. [настройку и HTTP-контракт](../docs/authentication.md).
 

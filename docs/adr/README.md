@@ -17,6 +17,7 @@ ADR фиксирует контекст, выбранное решение и е
 
 | ADR | Status |
 | --- | --- |
+| [0004 — Ansible execution adapter](0004-ansible-execution-adapter.md) | Proposed; implemented in TTCP-008, owner acceptance pending |
 | [0012 — Administrative authentication and sessions](0012-admin-auth-sessions.md) | Proposed; implemented in TTCP-006, owner acceptance pending |
 | [0013 — Durable job worker](0013-durable-job-worker.md) | Proposed; implemented in TTCP-007, owner acceptance pending |
 
@@ -26,7 +27,7 @@ ADR фиксирует контекст, выбранное решение и е
 
 | Вопрос | Когда возвращаться к нему |
 | --- | --- |
-| Модель доверия SSH-хостам и ротация ключей хоста | Когда реализация onboarding или SSH-управления требует выбора модели. |
+| Enrollment и ротация SSH host keys | TTCP-008 требует явно заданный проверенный ключ; автоматизация enrollment/ротации остаётся задачей onboarding. |
 | Удаление исторических jobs | TTCP-007 ограничивает history одной job; автоматическое удаление metadata требует отдельного решения. |
 
 TTCP-001 не выбирает варианты по этим вопросам. Состояние jobs в PostgreSQL и использование Redis для асинхронного взаимодействия уже определены спецификацией; открытые вопросы не меняют этих ограничений.

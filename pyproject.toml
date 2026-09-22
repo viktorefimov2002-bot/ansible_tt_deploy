@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "pytest-asyncio>=0.25,<1", "httpx>=0.28,<1", "ruff>=0.9,<1"]
+execution = ["ansible-core>=2.18,<2.19"]
 
 [tool.setuptools.packages.find]
 include = ["apps*"]
