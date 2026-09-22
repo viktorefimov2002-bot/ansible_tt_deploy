@@ -40,8 +40,9 @@ def config():
 
 def test_ordered_reproducible_offline_migrations():
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0004_jobs"]
+    assert scripts.get_heads() == ["0005_servers"]
     assert [r.revision for r in scripts.walk_revisions()] == [
+        "0005_servers",
         "0004_jobs",
         "0003_admin_auth",
         "0002_guards",

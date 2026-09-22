@@ -6,7 +6,8 @@
 (TTCP-003/004). [API и worker](apps/README.md) включают PostgreSQL persistence,
 административную аутентификацию и [durable jobs с SSE logs](docs/jobs.md).
 [Ansible execution adapter](docs/execution.md) добавляет безопасную границу выполнения
-и интеграцию с jobs. Управление серверами через API ещё не реализовано.
+и интеграцию с jobs. [Управление серверами](docs/servers.md) включает CRUD,
+зашифрованные SSH identities и durable pre-flight/status jobs (TTCP-009).
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

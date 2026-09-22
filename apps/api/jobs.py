@@ -39,6 +39,7 @@ def representation(job):
             "history",
             "log_sequence",
             "request_id",
+            "result",
         )
     }
 

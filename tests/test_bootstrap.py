@@ -72,7 +72,7 @@ async def test_api_readiness_recovers_and_liveness_stays_up(settings, monkeypatc
             assert (await client.get("/api/healthz")).status_code == 200
         dependencies.check.return_value = {"postgres": True, "redis": True}
         assert (await client.get("/readyz")).status_code == 200
-        assert (await client.get("/api/servers")).status_code == 404
+        assert (await client.get("/api/servers")).status_code == 503
         assert (await client.post("/api/healthz")).status_code == 405
     assert closed == [True]
 

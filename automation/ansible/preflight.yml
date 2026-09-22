@@ -1,0 +1,8 @@
+---
+- name: Read-only server prerequisites
+  hosts: trusttunnel
+  gather_facts: false
+  tasks:
+    - name: Collect bounded prerequisite results
+      ttcp_preflight:
+        acme_http: "{{ ttcp_acme_http }}"

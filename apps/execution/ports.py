@@ -47,16 +47,41 @@ class StatusParameters(ClosedModel):
     certificate_warning_days: int = Field(default=14, strict=True, ge=1, le=90)
 
 
+class PreflightParameters(ClosedModel):
+    domain: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$")
+    public_ip: str = Field(max_length=45)
+    acme_http: bool = True
+
+
+CHECKS = (
+    "ssh",
+    "dns_a",
+    "dns_aaaa",
+    "tcp_80",
+    "tcp_443",
+    "udp_443",
+    "os",
+    "architecture",
+    "disk",
+    "memory",
+    "time_sync",
+)
+CHECK_STATES = ("pass", "fail", "unknown", "skipped")
+
+
 class ExecutionRequest(ClosedModel):
-    operation: Literal["server.status", "execution.validate"]
+    operation: Literal["server.status", "server.preflight", "execution.validate"]
     target: Target | None = Field(default=None, repr=False, exclude=True)
     parameters: StatusParameters = Field(default_factory=StatusParameters)
+    preflight: PreflightParameters | None = None
     timeout_seconds: int = Field(default=45, strict=True, ge=1, le=45)
 
     @model_validator(mode="after")
     def selected_target(self):
-        if (self.operation == "server.status") != (self.target is not None):
+        if (self.operation != "execution.validate") != (self.target is not None):
             raise ValueError("Operation requires an explicit, appropriate target")
+        if (self.operation == "server.preflight") != (self.preflight is not None):
+            raise ValueError("Preflight parameters required only for preflight")
         return self
 
 
@@ -82,6 +107,7 @@ class Outcome(StrEnum):
 class ExecutionResult:
     outcome: Outcome
     exit_code: int | None = None
+    checks: dict[str, str] | None = None
 
 
 EventSink = Callable[[ExecutionEvent], Awaitable[None]]

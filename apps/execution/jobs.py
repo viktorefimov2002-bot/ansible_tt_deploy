@@ -10,7 +10,7 @@ from apps.jobs.worker import Context, ExecutionFailure, Handler
 
 
 class RequestResolver(Protocol):
-    async def resolve(self, target_id: UUID) -> ExecutionRequest:
+    async def resolve(self, target_id: UUID, operation: str = "server.status") -> ExecutionRequest:
         """Load authorized durable intent and ephemeral secrets; never from job metadata."""
         ...
 
@@ -28,13 +28,17 @@ def execution_handlers(
                 raise ExecutionFailure("execution_invalid")
             request = ExecutionRequest(operation="execution.validate")
         elif (
-            job.type == "server.status"
+            job.type in ("server.status", "server.preflight")
             and job.target_type == "server"
             and job.target_id is not None
             and resolver is not None
         ):
-            request = await resolver.resolve(job.target_id)
-            if request.operation != "server.status":
+            request = (
+                await resolver.resolve(job.target_id)
+                if job.type == "server.status"
+                else await resolver.resolve(job.target_id, job.type)
+            )
+            if request.operation != job.type:
                 raise ExecutionFailure("execution_invalid")
         else:
             raise ExecutionFailure("execution_invalid")
@@ -56,6 +60,12 @@ def execution_handlers(
                 await watcher
             result = await active
             await context.service.check_execution(context.job_id, context.token)
+            if resolver is not None and job.target_type == "server":
+                await context.service.execution_result(context.job_id, context.token, result)
+            if job.type == "server.preflight" and result.checks is not None:
+                # A completed diagnostic may contain failed/unknown checks. Preserve the
+                # report instead of turning prerequisite failures into worker failures.
+                return
             if result.outcome != Outcome.SUCCEEDED:
                 raise ExecutionFailure(result.outcome.value)
         finally:
@@ -67,4 +77,5 @@ def execution_handlers(
     if resolver is not None:
         # Read-only status is safe to interrupt/replay. Mutations are not admitted.
         handlers["server.status"] = Handler(execute, replay_safe=True, cancellable=True)
+        handlers["server.preflight"] = Handler(execute, replay_safe=True, cancellable=True)
     return handlers

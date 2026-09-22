@@ -1,5 +1,8 @@
 # ADR-0004: Ansible execution boundary
 
+TTCP-009 update: the deferred SSH enrollment/rotation policy below is now resolved
+by [ADR-0014](0014-server-ssh-trust.md). The existing strict pinning remains in force.
+
 - Status: Proposed; implemented for TTCP-008, owner acceptance pending
 - Date: 2026-09-21
 - Basis: architecture sections 5–6, 19–20, 23; TTCP-008 implementation request

@@ -114,14 +114,16 @@ services:
       context: ../..
       dockerfile: apps/Dockerfile
       target: worker
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      TTCP_AUTH_ENCRYPTION_KEY: ${TTCP_AUTH_ENCRYPTION_KEY:-}
     command: [python, -m, apps.worker]
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=64m
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    networks: [database, queue]
+    networks: [database, queue, management_egress]
     mem_limit: 128m
     stop_grace_period: 30s
     depends_on:
@@ -205,6 +207,8 @@ services:
 
 networks:
   entrypoint:
+  # Worker-initiated SSH/DNS only; no published ports or database exposure.
+  management_egress:
   application:
     internal: true
   database:

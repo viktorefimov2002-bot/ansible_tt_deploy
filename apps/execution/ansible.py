@@ -9,12 +9,15 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from apps.execution.ports import (
+    CHECK_STATES,
+    CHECKS,
     EventSink,
     ExecutionEvent,
     ExecutionRequest,
     ExecutionResult,
     Outcome,
 )
+from apps.execution.preflight import dns_checks
 from apps.execution.process import run_process
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,9 +47,15 @@ class AnsibleExecutionAdapter:
         except (ValidationError, AttributeError, TypeError):
             return ExecutionResult(Outcome.INVALID)
 
+        checks = None
+        if request.operation == "server.preflight":
+            checks = dict.fromkeys(CHECKS, "unknown")
+            checks.update(await dns_checks(request.preflight))
+            if not request.preflight.acme_http:
+                checks["tcp_80"] = "skipped"
         if self.runner is run_process and os.name != "posix":
             # Do not materialize credentials on unsupported controllers.
-            return ExecutionResult(Outcome.UNAVAILABLE)
+            return ExecutionResult(Outcome.UNAVAILABLE, checks=checks)
 
         try:
             with tempfile.TemporaryDirectory(prefix="ttcp-execution-") as directory:
@@ -70,6 +79,21 @@ class AnsibleExecutionAdapter:
                     pending += chunk
                     while b"\n" in pending:
                         line, pending = pending.split(b"\n", 1)
+                        if checks is not None and line.startswith(b"ttcp_checks:"):
+                            try:
+                                report = json.loads(line[12:])
+                                if not isinstance(report, dict) or len(report) > len(CHECKS):
+                                    raise ValueError
+                                for key, value in report.items():
+                                    if (
+                                        key in CHECKS
+                                        and not key.startswith("dns_")
+                                        and value in CHECK_STATES
+                                    ):
+                                        checks[key] = value
+                                continue
+                            except (ValueError, TypeError, UnicodeError):
+                                pass
                         try:
                             event = ExecutionEvent(line.decode("ascii"))
                         except (ValueError, UnicodeDecodeError):
@@ -92,11 +116,13 @@ class AnsibleExecutionAdapter:
                 if pending:
                     await output(b"\n", False)
                 outcome = {0: Outcome.SUCCEEDED, 4: Outcome.UNREACHABLE}.get(code, Outcome.FAILED)
-                return ExecutionResult(outcome, code)
+                if checks is not None and outcome == Outcome.UNREACHABLE:
+                    checks["ssh"] = "fail"
+                return ExecutionResult(outcome, code, checks)
         except TimeoutError:
-            return ExecutionResult(Outcome.TIMED_OUT)
+            return ExecutionResult(Outcome.TIMED_OUT, checks=checks)
         except OSError:
-            return ExecutionResult(Outcome.UNAVAILABLE)
+            return ExecutionResult(Outcome.UNAVAILABLE, checks=checks)
 
     def _prepare(self, request: ExecutionRequest, cwd: Path):
         def write(name: str, content: str):
@@ -141,6 +167,7 @@ class AnsibleExecutionAdapter:
                     ),
                     "trusttunnel_status_output_file": "",
                     "trusttunnel_client_config_local_dir": str(cwd / "client_configs"),
+                    "ttcp_acme_http": request.preflight.acme_http if request.preflight else False,
                 }
             ),
         )
@@ -152,10 +179,13 @@ class AnsibleExecutionAdapter:
             "LANG": "C.UTF-8",
             "ANSIBLE_CONFIG": str(cwd / "ansible.cfg"),
             "ANSIBLE_LOCAL_TEMP": str(cwd / "tmp"),
-            "ANSIBLE_STDOUT_CALLBACK": "ttcp_safe",
+            "ANSIBLE_STDOUT_CALLBACK": (
+                "ttcp_preflight_safe" if request.operation == "server.preflight" else "ttcp_safe"
+            ),
             "ANSIBLE_CALLBACK_PLUGINS": str(ROOT / "apps/execution/callback_plugins"),
             "ANSIBLE_NOCOLOR": "1",
             "ANSIBLE_LOAD_CALLBACK_PLUGINS": "0",
+            "ANSIBLE_LIBRARY": str(ROOT / "apps/execution/library"),
         }
         argv: tuple[str, ...] = (
             self.executable,
@@ -165,7 +195,11 @@ class AnsibleExecutionAdapter:
             "managed",
             "--extra-vars",
             "@" + str(cwd / "parameters.json"),
-            str(ROOT / "automation/ansible/status.yml"),
+            str(
+                ROOT
+                / "automation/ansible"
+                / ("preflight.yml" if request.operation == "server.preflight" else "status.yml")
+            ),
         )
         if request.operation == "execution.validate":
             argv += ("--syntax-check",)

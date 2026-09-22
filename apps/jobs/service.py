@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from apps.jobs.ports import EventPublisher, JobQueue, TransportUnavailable
 from apps.persistence.database import transaction
-from apps.persistence.models import AuditEvent, Job
+from apps.persistence.models import AuditEvent, Job, Server
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MESSAGES = {
@@ -241,6 +241,33 @@ class JobService:
             job, _ = await self._owned(db, job_id, token)
             if job.cancel_requested_at:
                 raise CancellationRequested
+
+    async def execution_result(self, job_id, token, result):
+        from apps.execution.ports import CHECK_STATES, CHECKS, Outcome
+
+        outcome = Outcome(result.outcome)
+        checks = result.checks
+        if checks is not None and (
+            set(checks) != set(CHECKS)
+            or any(value not in CHECK_STATES for value in checks.values())
+        ):
+            raise ValueError("Invalid diagnostic result")
+        async with transaction(self.engine) as db:
+            job, now = await self._owned(db, job_id, token)
+            if job.cancel_requested_at:
+                raise CancellationRequested
+            job.result = {"outcome": outcome.value, "attempt": job.attempts}
+            if checks is not None:
+                job.result = job.result | {
+                    "checks": checks,
+                    "ready": all(value in ("pass", "skipped") for value in checks.values()),
+                }
+            server = await db.get(Server, job.target_id)
+            if server is not None:
+                reachable = checks.get("ssh") == "pass" if checks else outcome == Outcome.SUCCEEDED
+                server.status = "reachable" if reachable else "unknown"
+                if reachable:
+                    server.last_seen_at = now
 
     def _failure(self, job, now, code, retryable, *, acknowledge_cancel=True):
         job.error_code, job.error_message = code, MESSAGES[code]

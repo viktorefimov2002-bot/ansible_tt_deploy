@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements-execution.lock \
     && apt-get install -y --no-install-recommends openssh-client sshpass \
     && rm -rf /var/lib/apt/lists/*
 COPY automation/ansible/status.yml ./automation/ansible/status.yml
+COPY automation/ansible/preflight.yml ./automation/ansible/preflight.yml
 COPY automation/ansible/group_vars/all.yml ./automation/ansible/group_vars/all.yml
 USER 65534:65534
 CMD ["python", "-m", "apps.worker"]

@@ -113,6 +113,9 @@ class Server(Identity, Updated, Base):
     enabled: Mapped[bool] = mapped_column(server_default=text("true"))
     ssh_user: Mapped[str] = mapped_column(String(128))
     ssh_port: Mapped[int] = mapped_column(server_default=text("22"))
+    ssh_host_key: Mapped[str | None] = mapped_column(String(8192))
+    ssh_private_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    acme_http: Mapped[bool] = mapped_column(server_default=text("true"))
     trusttunnel_version: Mapped[str | None] = mapped_column(String(64))
     desired_trusttunnel_version: Mapped[str | None] = mapped_column(String(64))
     config_revision_id: Mapped[UUID | None]
@@ -248,3 +251,4 @@ class Job(Identity, Updated, Base):
     error_message: Mapped[str | None] = mapped_column(String(255))
     log_sequence: Mapped[int] = mapped_column(server_default=text("0"))
     history: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    result: Mapped[dict | None] = mapped_column(JSONB)

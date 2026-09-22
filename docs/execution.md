@@ -1,5 +1,10 @@
 # Execution adapter — TTCP-008
 
+TTCP-009 extends this foundation with server resolution, encrypted management keys
+and a separate structured pre-flight callback. See [server management](servers.md)
+and [SSH trust decision](adr/0014-server-ssh-trust.md). The historical TTCP-008 scope
+and validation record below describe the original foundation.
+
 `apps/execution/ports.py` defines ExecutionPort, closed Pydantic requests, structured
 results and safe events. `ansible.py` implements it; `jobs.py` supplies TTCP-007
 handlers without importing the Ansible implementation. See [ADR-0004](adr/0004-ansible-execution-adapter.md).

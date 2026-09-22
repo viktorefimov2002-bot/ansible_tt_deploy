@@ -9,6 +9,7 @@ from apps.execution.jobs import execution_handlers
 from apps.jobs.redis import RedisTransport
 from apps.jobs.service import JobService
 from apps.jobs.worker import HANDLERS, Worker
+from apps.servers.service import ServerService
 from apps.shared.config import ConfigurationError, Settings, load_settings
 from apps.shared.dependencies import DependencyUnavailable, connected_dependencies
 from apps.shared.logging import configure_logging
@@ -22,7 +23,18 @@ async def run(settings: Settings, stop: asyncio.Event):
         transport = RedisTransport(dependencies.redis)
         worker = Worker(
             JobService(dependencies.engine, transport, transport),
-            {**HANDLERS, **execution_handlers(AnsibleExecutionAdapter())},
+            {
+                **HANDLERS,
+                **execution_handlers(
+                    AnsibleExecutionAdapter(),
+                    ServerService(
+                        dependencies.engine,
+                        settings.auth_encryption_key.get_secret_value()
+                        if settings.auth_encryption_key
+                        else None,
+                    ),
+                ),
+            },
         )
         consumer = asyncio.create_task(worker.run(stop))
         previous = True
