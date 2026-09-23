@@ -8,6 +8,8 @@
 [Ansible execution adapter](docs/execution.md) добавляет безопасную границу выполнения
 и интеграцию с jobs. [Управление серверами](docs/servers.md) включает CRUD,
 зашифрованные SSH identities и durable pre-flight/status jobs (TTCP-009).
+Отдельный [managed-node bootstrap](docs/node-bootstrap.md) подготавливает VPS
+для управления без сохранения provider/root credentials (TTCP-010).
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

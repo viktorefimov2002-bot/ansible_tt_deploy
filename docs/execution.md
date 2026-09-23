@@ -5,6 +5,14 @@ and a separate structured pre-flight callback. See [server management](servers.m
 and [SSH trust decision](adr/0014-server-ssh-trust.md). The historical TTCP-008 scope
 and validation record below describe the original foundation.
 
+TTCP-010 changes the Control Plane status/validation mapping to
+`managed-status.yml`, invoking only the fixed no-argument sudo helper installed by
+[managed-node bootstrap](node-bootstrap.md). It does not use arbitrary Ansible
+become. Status still reports management reachability, not VPN health; legacy status
+log/certificate parameters remain accepted but are unused by this probe. The
+standalone CLI status playbook and bootstrap are unchanged. Existing nodes need
+the new helper before upgrading the worker. See [ADR-0015](adr/0015-managed-node-bootstrap.md).
+
 `apps/execution/ports.py` defines ExecutionPort, closed Pydantic requests, structured
 results and safe events. `ansible.py` implements it; `jobs.py` supplies TTCP-007
 handlers without importing the Ansible implementation. See [ADR-0004](adr/0004-ansible-execution-adapter.md).

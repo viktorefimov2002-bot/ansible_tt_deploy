@@ -1,0 +1,11 @@
+---
+- name: Check managed node through its fixed read-only privilege boundary
+  hosts: trusttunnel
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Read service state without granting arbitrary root execution
+      ansible.builtin.command:
+        argv: [/usr/bin/sudo, -n, /usr/local/sbin/ttcp-node-status]
+      changed_when: false
+      no_log: true

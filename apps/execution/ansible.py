@@ -198,7 +198,11 @@ class AnsibleExecutionAdapter:
             str(
                 ROOT
                 / "automation/ansible"
-                / ("preflight.yml" if request.operation == "server.preflight" else "status.yml")
+                / (
+                    "preflight.yml"
+                    if request.operation == "server.preflight"
+                    else "managed-status.yml"
+                )
             ),
         )
         if request.operation == "execution.validate":

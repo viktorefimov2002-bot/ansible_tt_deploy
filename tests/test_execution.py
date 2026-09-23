@@ -45,7 +45,7 @@ async def test_adapter_contract_and_secret_safe_stream(code, outcome, auth, monk
         assert env["ANSIBLE_STDOUT_CALLBACK"] == "ttcp_safe"
         assert "fixture-secret" not in str(argv) + str(env)
         assert "fixture-key" not in str(argv) + str(env)
-        assert argv[-1] == str(ROOT / "automation/ansible/status.yml")
+        assert argv[-1] == str(ROOT / "automation/ansible/managed-status.yml")
         assert argv[argv.index("--limit") + 1] == "managed"
         inventory = json.loads((cwd / "inventory.json").read_text())
         hosts = inventory["trusttunnel"]["hosts"]

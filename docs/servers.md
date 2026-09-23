@@ -92,8 +92,11 @@ unknown. Reachable means management reachability, **not VPN health**. `last_seen
 advances only for an observed successful remote check. Diagnostic reports cannot
 authorize a future deploy on their own; freshness and rollout gating belong to the
 deployment task.
-The existing status playbook uses sudo and requires a prepared management account
-with its existing non-interactive sudo permissions; pre-flight does not require sudo.
+TTCP-010 status uses `managed-status.yml` and the fixed root-owned status helper
+installed by [managed-node bootstrap](node-bootstrap.md). It requires only that
+helper's no-argument sudo permission. The legacy CLI status playbook is unchanged;
+pre-flight does not require sudo. Existing managed nodes must install the new helper
+before running status with the upgraded worker.
 
 ## Operations
 
