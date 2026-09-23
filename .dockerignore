@@ -7,6 +7,7 @@
 !automation/ansible/
 !automation/ansible/status.yml
 !automation/ansible/managed-status.yml
+!automation/ansible/managed-credential.yml
 !automation/ansible/preflight.yml
 !automation/ansible/group_vars/
 !automation/ansible/group_vars/all.yml

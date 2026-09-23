@@ -50,10 +50,12 @@ class Worker:
         *,
         timeout: float = 60,
         grace: float = 20,
+        maintenance=None,
     ):
         self.service = service
         self.handlers = HANDLERS if handlers is None else handlers
         self.timeout, self.grace = timeout, grace
+        self.maintenance = maintenance
 
     async def execute(self, job_id: UUID):
         job = await self.service.claim(job_id, lease_seconds=self.timeout + 30)
@@ -99,6 +101,8 @@ class Worker:
 
     async def run(self, stop: asyncio.Event):
         while not stop.is_set():
+            if self.maintenance is not None:
+                await self.maintenance()
             await self.service.recover()
             try:
                 await self.service.dispatch()

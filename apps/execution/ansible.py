@@ -42,6 +42,12 @@ class AnsibleExecutionAdapter:
                         "password": request.target.password,
                         "private_key": request.target.private_key,
                     },
+                    "credential": None
+                    if request.credential is None
+                    else {
+                        "username": request.credential.username,
+                        "password": request.credential.password,
+                    },
                 }
             )
         except (ValidationError, AttributeError, TypeError):
@@ -168,6 +174,17 @@ class AnsibleExecutionAdapter:
                     "trusttunnel_status_output_file": "",
                     "trusttunnel_client_config_local_dir": str(cwd / "client_configs"),
                     "ttcp_acme_http": request.preflight.acme_http if request.preflight else False,
+                    "ttcp_credential_payload": (
+                        {
+                            "operation": request.operation,
+                            "username": request.credential.username,
+                            "password": request.credential.password.get_secret_value()
+                            if request.credential.password
+                            else None,
+                        }
+                        if request.credential
+                        else None
+                    ),
                 }
             ),
         )
@@ -201,6 +218,8 @@ class AnsibleExecutionAdapter:
                 / (
                     "preflight.yml"
                     if request.operation == "server.preflight"
+                    else "managed-credential.yml"
+                    if request.operation.startswith("credential.")
                     else "managed-status.yml"
                 )
             ),

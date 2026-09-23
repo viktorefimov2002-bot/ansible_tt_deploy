@@ -18,6 +18,7 @@ KEY = "/etc/ssh/ttcp_authorized_keys"
 SSH = "/etc/ssh/sshd_config.d/00-ttcp.conf"
 SUDO = "/etc/sudoers.d/ttcp"
 HELPER = "/usr/local/sbin/ttcp-node-status"
+CREDENTIAL_HELPER = "/usr/local/sbin/ttcp-node-credential"
 EXPORTER = "/etc/systemd/system/prometheus-node-exporter.service.d/ttcp.conf"
 DEFAULTS = "/etc/default/prometheus-node-exporter"
 PACKAGES = ("python3", "sudo", "prometheus-node-exporter")
@@ -50,6 +51,7 @@ fi
 """
 SUDOERS = f"""Defaults:{USER} env_reset, !setenv
 {USER} ALL=(root) NOPASSWD: {HELPER} ""
+{USER} ALL=(root) NOPASSWD: {CREDENTIAL_HELPER} ""
 """
 SSHD = f"""# Owned by TTCP bootstrap; provider access policy is unchanged.
 Match User {USER}
@@ -177,7 +179,7 @@ class Node:
             raise BootstrapError("systemd required")
         self.trusted("/var/lib")
         self.run("/usr/sbin/sshd", "-t")
-        for name in (MARKER, KEY, SSH, SUDO, HELPER, EXPORTER, DEFAULTS):
+        for name in (MARKER, KEY, SSH, SUDO, HELPER, CREDENTIAL_HELPER, EXPORTER, DEFAULTS):
             self.trusted(name)
             if self.path(name).exists() and not self.path(name).is_file():
                 raise BootstrapError("managed path is not a regular file")
@@ -192,7 +194,10 @@ class Node:
             if (
                 account
                 or self.path(HOME).exists()
-                or any(self.path(p).exists() for p in (KEY, SSH, SUDO, HELPER, EXPORTER))
+                or any(
+                    self.path(p).exists()
+                    for p in (KEY, SSH, SUDO, HELPER, CREDENTIAL_HELPER, EXPORTER)
+                )
             ):
                 raise BootstrapError("refusing to adopt existing account or configuration")
             if self.path(DEFAULTS).exists():
@@ -212,6 +217,12 @@ class Node:
         return bool(account)
 
     def apply(self, key):
+        try:
+            credential_source = (
+                Path(__file__).with_name("node_credential.py").read_text(encoding="utf-8")
+            )
+        except OSError:
+            raise BootstrapError("credential helper source missing") from None
         exists = self.validate(key)  # All admission checks precede mutation.
         self.write(MARKER, OWNER, 0o600)  # Allows recovery after a partial user creation.
         if not exists:
@@ -236,6 +247,7 @@ class Node:
         self.run("/usr/bin/apt-get", "update")
         self.run("/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *PACKAGES)
         self.write(HELPER, STATUS, 0o755)
+        self.write(CREDENTIAL_HELPER, credential_source, 0o755)
         # Validate the exact prospective rule before installing it.
         self.write(STATE + "/sudoers.check", SUDOERS, 0o600)
         try:

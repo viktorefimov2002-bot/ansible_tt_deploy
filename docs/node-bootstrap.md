@@ -28,7 +28,7 @@ bootstrap script or stored in the API, database, Redis, repository or artifacts.
 
 ## Run on the node
 
-Copy both reviewed files from `scripts/` to a root-controlled directory on the
+Copy `bootstrap-node.sh`, `bootstrap_node.py`, and `node_credential.py` from `scripts/` to a root-controlled directory on the
 node through that verified connection or provider console. Transfer only the
 management **public** key to `/root/ttcp-management.pub` outside the repository;
 strip its optional comment so it contains exactly `ssh-ed25519 BASE64`.
@@ -51,12 +51,14 @@ restricts SSH to public-key authentication with forwarding, PTY and user RC disa
 The root-owned key file is world-readable because sshd reads it as `ttcp`; it
 contains only the public key. The account can write its home for Ansible temporary
 files but cannot change its authorized key or privilege helper. Sudo accepts only
-`/usr/local/sbin/ttcp-node-status` **without arguments**. It does not grant shell,
+`/usr/local/sbin/ttcp-node-status` and `/usr/local/sbin/ttcp-node-credential`
+**without arguments**. The latter accepts only credential create/revoke JSON on
+stdin and updates `/opt/trusttunnel/credentials.toml` atomically. It does not grant shell,
 interpreter, package manager, systemctl restart or arbitrary Ansible become access.
 The helper reports fixed systemd service and process properties, the automatic
 restart count, and a running version when the endpoint's documented
 `--version` response is safely available. Rerun bootstrap with the same key
-on an already prepared node to install the updated helper for TTCP-011.
+on an already prepared node to install the updated helpers for TTCP-011/012.
 
 An existing `ttcp` account/configuration without the exact bootstrap ownership
 marker is rejected. Repeated runs keep the same key; differing keys, privileged

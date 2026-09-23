@@ -53,6 +53,19 @@ class PreflightParameters(ClosedModel):
     acme_http: bool = True
 
 
+class CredentialParameters(ClosedModel):
+    username: str = Field(pattern=r"^ttcp_[a-f0-9]{32}$", max_length=37)
+    password: SecretStr | None = Field(default=None, repr=False, exclude=True)
+
+    @model_validator(mode="after")
+    def safe_secret(self):
+        if self.password is not None:
+            value = self.password.get_secret_value()
+            if not 32 <= len(value) <= 128 or any(x in value for x in ("{{", "{%", "{#", "\x00")):
+                raise ValueError("Invalid credential secret")
+        return self
+
+
 CHECKS = (
     "ssh",
     "dns_a",
@@ -70,10 +83,17 @@ CHECK_STATES = ("pass", "fail", "unknown", "skipped")
 
 
 class ExecutionRequest(ClosedModel):
-    operation: Literal["server.status", "server.preflight", "execution.validate"]
+    operation: Literal[
+        "server.status",
+        "server.preflight",
+        "execution.validate",
+        "credential.create",
+        "credential.revoke",
+    ]
     target: Target | None = Field(default=None, repr=False, exclude=True)
     parameters: StatusParameters = Field(default_factory=StatusParameters)
     preflight: PreflightParameters | None = None
+    credential: CredentialParameters | None = Field(default=None, repr=False, exclude=True)
     timeout_seconds: int = Field(default=45, strict=True, ge=1, le=45)
 
     @model_validator(mode="after")
@@ -82,6 +102,13 @@ class ExecutionRequest(ClosedModel):
             raise ValueError("Operation requires an explicit, appropriate target")
         if (self.operation == "server.preflight") != (self.preflight is not None):
             raise ValueError("Preflight parameters required only for preflight")
+        if self.operation.startswith("credential."):
+            if self.credential is None or (self.operation == "credential.create") != (
+                self.credential.password is not None
+            ):
+                raise ValueError("Credential operation requires matching typed parameters")
+        elif self.credential is not None:
+            raise ValueError("Credential parameters are operation-specific")
         return self
 
 

@@ -159,6 +159,7 @@ class DeviceCredential(Identity, Base):
         UniqueConstraint("device_id", "server_id"),
         UniqueConstraint("server_id", "username"),
         CheckConstraint("length(trim(username)) > 0", name="username_nonblank"),
+        CheckConstraint("status IN ('pending','active','revoking','revoked')", name="status"),
     )
 
     device_id: Mapped[UUID] = mapped_column(ForeignKey("devices.id"))
@@ -166,6 +167,9 @@ class DeviceCredential(Identity, Base):
     username: Mapped[str] = mapped_column(String(128))
     # Nullable for metadata-only records; an issuing service must encrypt first.
     secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    status: Mapped[str] = mapped_column(String(16), server_default="pending")
+    applied_at: Mapped[datetime | None]
+    downloaded_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]
     device: Mapped[Device] = relationship(back_populates="credentials")
     server: Mapped[Server] = relationship()

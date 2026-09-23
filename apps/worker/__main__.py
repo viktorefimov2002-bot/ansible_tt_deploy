@@ -13,6 +13,8 @@ from apps.servers.service import ServerService
 from apps.shared.config import ConfigurationError, Settings, load_settings
 from apps.shared.dependencies import DependencyUnavailable, connected_dependencies
 from apps.shared.logging import configure_logging
+from apps.vpn.jobs import credential_handlers
+from apps.vpn.service import VpnService
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,19 @@ async def run(settings: Settings, stop: asyncio.Event):
     async with connected_dependencies(settings) as dependencies:
         logger.info("worker_started")
         transport = RedisTransport(dependencies.redis)
+        vpn = VpnService(
+            dependencies.engine,
+            settings.auth_encryption_key.get_secret_value()
+            if settings.auth_encryption_key
+            else None,
+        )
+        port = AnsibleExecutionAdapter()
         worker = Worker(
             JobService(dependencies.engine, transport, transport),
             {
                 **HANDLERS,
                 **execution_handlers(
-                    AnsibleExecutionAdapter(),
+                    port,
                     ServerService(
                         dependencies.engine,
                         settings.auth_encryption_key.get_secret_value()
@@ -34,7 +43,9 @@ async def run(settings: Settings, stop: asyncio.Event):
                         else None,
                     ),
                 ),
+                **credential_handlers(port, vpn),
             },
+            maintenance=vpn.expire_due,
         )
         consumer = asyncio.create_task(worker.run(stop))
         previous = True
