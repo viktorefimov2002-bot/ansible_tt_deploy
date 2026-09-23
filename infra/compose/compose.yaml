@@ -165,8 +165,10 @@ services:
       - -retentionPeriod=${VM_RETENTION:-7d}
       - -memory.allowedBytes=256MiB
       - -selfScrapeInterval=30s
+      - -promscrape.config=/etc/victoriametrics/scrape.yaml
     volumes:
       - victoriametrics_data:/victoria-metrics-data
+      - ../monitoring/victoriametrics/scrape.yaml:/etc/victoriametrics/scrape.yaml:ro
     networks: [metrics]
     mem_limit: 384m
     stop_grace_period: 30s
@@ -193,6 +195,8 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ../monitoring/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/default.yaml:ro
+      - ../monitoring/grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/default.yaml:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/ttcp-dashboards:ro
     networks: [entrypoint, metrics]
     mem_limit: 256m
     depends_on:
@@ -204,6 +208,35 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  metrics-collector:
+    <<: *runtime
+    build:
+      context: ../..
+      dockerfile: apps/Dockerfile
+      target: worker
+    command: [python, -m, apps.monitoring]
+    environment:
+      TTCP_POSTGRES_HOST: postgres
+      TTCP_POSTGRES_DB: ${POSTGRES_DB:-ttcp}
+      TTCP_POSTGRES_USER: ${POSTGRES_APP_USER:-${POSTGRES_USER:-ttcp}}
+      TTCP_POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:-${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}}
+      TTCP_AUTH_ENCRYPTION_KEY: ${TTCP_AUTH_ENCRYPTION_KEY:?Set TTCP_AUTH_ENCRYPTION_KEY in .env}
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [database, metrics, management_egress]
+    mem_limit: 128m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -m, apps.shared.healthcheck, monitoring]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   entrypoint:

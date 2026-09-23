@@ -15,6 +15,9 @@ async def worker_probe(settings):
 
 def main():
     try:
+        if sys.argv[1:] == ["monitoring"]:
+            with urlopen("http://127.0.0.1:9101/healthz", timeout=3) as response:
+                return 0 if response.status == 200 else 1
         settings = load_settings()
         if sys.argv[1:] == ["api"]:
             with urlopen(f"http://127.0.0.1:{settings.api_port}/readyz", timeout=12) as response:

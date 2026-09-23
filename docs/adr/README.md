@@ -22,6 +22,7 @@ ADR фиксирует контекст, выбранное решение и е
 | [0013 — Durable job worker](0013-durable-job-worker.md) | Proposed; implemented in TTCP-007, owner acceptance pending |
 | [0014 — Server SSH trust](0014-server-ssh-trust.md) | Accepted under TTCP-009 delegated decision authority |
 | [0015 — Managed-node bootstrap](0015-managed-node-bootstrap.md) | Proposed; implemented in TTCP-010, owner acceptance pending |
+| [0016 — Observability transport](0016-observability-transport.md) | Proposed; implemented in TTCP-011, live-node acceptance pending |
 
 Решения, уже установленные спецификацией, сохраняют силу независимо от отсутствия отдельных ADR; их последующее оформление не должно выдумывать историю согласования.
 

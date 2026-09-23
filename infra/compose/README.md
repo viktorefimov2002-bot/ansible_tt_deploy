@@ -125,8 +125,15 @@ Remote encrypted backups и restore workflow остаются эксплуата
 
 Grafana включена согласно фазе 1 спецификации. Единственный provisioned datasource
 использует встроенный Prometheus-compatible тип и `http://victoriametrics:8428`.
-VictoriaMetrics собирает только собственные метрики; exporters, дашборды,
-алерты и метрики приложения оставлены TTCP-011.
+VictoriaMetrics собирает собственные метрики и `metrics-collector:9101` каждые
+30 секунд. Collector по pinned SSH читает TTCP-010 node_exporter через loopback
+управляемого узла; подробности и границы доверия — в
+[ADR-0016](../../docs/adr/0016-observability-transport.md). Требуется
+`TTCP_AUTH_ENCRYPTION_KEY` в `.env`, совпадающий с API/worker. Дашборд
+`TrustTunnel managed nodes` provisioned в Grafana; `server_id` связывает метрики
+с сервером в PostgreSQL. `ttcp_server_info` содержит текущий статус Control Plane,
+`ttcp_node_scrape_success` — результат SSH/exporter, а `up` — доступность
+collector. Отказ мониторинга не меняет VPN или записи о серверах.
 
 ## Проверки и сброс
 

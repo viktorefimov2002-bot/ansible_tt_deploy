@@ -63,8 +63,9 @@ SSH policy installed by an administrator. Custom SSH Allow/Deny/Match restrictio
 must permit the management account from the actual Control Plane address.
 
 The exporter is installed from the distribution repository with a systemd override
-listening on `127.0.0.1:9100`. No network port is opened. TTCP-011 must establish
-authenticated/private scraping separately; SSH forwarding is disabled for `ttcp`.
+listening on `127.0.0.1:9100`. No network port is opened. TTCP-011 uses a pinned
+SSH command as `ttcp` to read it over node loopback; forwarding stays disabled.
+See [ADR-0016](adr/0016-observability-transport.md).
 No full system upgrade, Ansible controller, Docker, VPN binary or monitoring backend
 is installed on the node.
 

@@ -29,9 +29,10 @@ for name in POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD; do
 done
 unset value
 printf 'HTTP_PORT=0\nGRAFANA_PORT=0\n' >> "$TEST_DIR/runtime.env"
+printf 'TTCP_AUTH_ENCRYPTION_KEY=%s\n' "$(openssl rand -base64 32)" >> "$TEST_DIR/runtime.env"
 dc config --quiet
 dc up -d --wait --wait-timeout 180 postgres redis
-dc build api worker migrate
+dc build api worker migrate metrics-collector
 # Explicit deployment step, never performed automatically by API/worker startup.
 dc run --rm --no-deps migrate
 dc run --rm --no-deps migrate
@@ -80,6 +81,18 @@ printf '%s\n' "$auth_error" | grep -q WRONGPASS
 dc exec -T victoriametrics wget -qO- http://127.0.0.1:8428/health
 dc exec -T grafana wget -qO- http://victoriametrics:8428/health
 dc exec -T grafana wget -qO- http://127.0.0.1:3000/api/health | grep -q '"database"[[:space:]]*:[[:space:]]*"ok"'
+dc exec -T metrics-collector python -m apps.shared.healthcheck monitoring
+dc exec -T victoriametrics wget -qO- http://metrics-collector:9101/metrics | grep -q '# TYPE ttcp_node_scrape_success gauge'
+for attempt in $(seq 1 12); do
+    if dc exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up%7Bjob%3D%22ttcp-managed-nodes%22%7D' | grep -q 'ttcp-managed-nodes'; then
+        break
+    fi
+    [ "$attempt" -lt 12 ] || { echo 'FAIL: VictoriaMetrics did not scrape collector' >&2; exit 1; }
+    sleep 5
+done
+dc stop metrics-collector
+dc exec -T nginx wget -qO- http://api:8080/healthz | grep -q '"ok"'
+dc up -d --wait --wait-timeout 120 metrics-collector
 dc exec -T nginx wget -qO- http://127.0.0.1:8080/healthz
 dc exec -T nginx wget -qO- http://127.0.0.1:8080/api/healthz | grep -q '"ok"'
 dc exec -T nginx wget -qO- http://127.0.0.1:8080/api/readyz | grep -q '"ready"'
