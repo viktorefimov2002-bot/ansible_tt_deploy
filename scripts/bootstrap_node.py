@@ -26,13 +26,27 @@ STATUS = """#!/bin/sh
 set -eu
 [ "$#" -eq 0 ] || exit 64
 state=$(/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \\
-    /usr/bin/systemctl show trusttunnel.service --property=LoadState,ActiveState,SubState) || {
+    /usr/bin/systemctl show trusttunnel.service \\
+    --property=LoadState,ActiveState,SubState,MainPID,NRestarts) || {
     case "$state" in
         *'LoadState=not-found'*) ;; # A fresh node has no VPN service yet.
         *) exit 1 ;;
     esac
 }
 printf '%s\\n' "$state"
+pid=$(printf '%s\\n' "$state" | /usr/bin/sed -n 's/^MainPID=//p')
+case "$pid" in
+    ''|*[!0-9]*) pid=0 ;;
+esac
+if [ "$pid" -gt 0 ] && [ -e "/proc/$pid/exe" ]; then
+    # The documented --version option exits without reading VPN configuration.
+    # Read the running executable, so an on-disk update cannot mislabel it.
+    if version=$(/usr/bin/timeout 2 "/proc/$pid/exe" --version 2>/dev/null); then
+        version=$(printf '%s\\n' "$version" | /usr/bin/sed -nE \\
+            's/^[^0-9]*([0-9]+\\.[0-9]+\\.[0-9]+)[[:space:]]*$/\\1/p' | /usr/bin/head -n 1)
+        [ -z "$version" ] || printf 'Version=%s\\n' "$version"
+    fi
+fi
 """
 SUDOERS = f"""Defaults:{USER} env_reset, !setenv
 {USER} ALL=(root) NOPASSWD: {HELPER} ""

@@ -43,8 +43,13 @@ REMOTE = (
     "python3 -c 'import urllib.request; "
     "opener=urllib.request.build_opener(urllib.request.ProxyHandler({})); "
     'print(opener.open("http://127.0.0.1:9100/metrics", '
-    'timeout=5).read().decode(), end="")\''
+    'timeout=5).read().decode(), end="")\' '
+    "&& { printf '\\n# TTCP_STATUS_BEGIN\\n'; "
+    "/usr/bin/sudo -n /usr/local/sbin/ttcp-node-status 2>/dev/null || true; }"
 )
+STATUS_MARKER = b"# TTCP_STATUS_BEGIN\n"
+STATES = re.compile(r"^[a-z][a-z-]{0,31}$")
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 def label(value):
@@ -76,6 +81,47 @@ def filter_metrics(raw: bytes, server_id: str) -> list[str]:
             raise ValueError("too many exporter samples")
     if not lines:
         raise ValueError("no selected exporter samples")
+    return lines
+
+
+def service_metrics(raw: bytes, server_id: str) -> list[str]:
+    """Accept only the fixed helper's bounded key/value contract."""
+    if len(raw) > 1024:
+        return [f'ttcp_service_probe_success{{server_id="{server_id}"}} 0']
+    try:
+        pairs = [line.split("=", 1) for line in raw.decode("ascii").splitlines()]
+        fields = dict(pairs)
+    except (UnicodeError, ValueError):
+        fields = {}
+    required = {"LoadState", "ActiveState", "SubState", "MainPID", "NRestarts"}
+    if (
+        not required <= fields.keys()
+        or not fields.keys() <= required | {"Version"}
+        or len(fields) != len(pairs)
+    ):
+        return [f'ttcp_service_probe_success{{server_id="{server_id}"}} 0']
+    if not all(STATES.fullmatch(fields[name]) for name in ("LoadState", "ActiveState", "SubState")):
+        return [f'ttcp_service_probe_success{{server_id="{server_id}"}} 0']
+    if not fields["MainPID"].isdigit() or not fields["NRestarts"].isdigit():
+        return [f'ttcp_service_probe_success{{server_id="{server_id}"}} 0']
+    active = fields["LoadState"] == "loaded" and fields["ActiveState"] == "active"
+    process = active and int(fields["MainPID"]) > 0
+    lines = [
+        f'ttcp_service_probe_success{{server_id="{server_id}"}} 1',
+        f'ttcp_service_state_info{{server_id="{server_id}",load_state="{fields["LoadState"]}",'
+        f'active_state="{fields["ActiveState"]}",sub_state="{fields["SubState"]}"}} 1',
+        f'ttcp_service_active{{server_id="{server_id}"}} {int(active)}',
+        f'ttcp_process_running{{server_id="{server_id}"}} {int(process)}',
+        (
+            f'ttcp_service_automatic_restarts_total{{server_id="{server_id}"}} '
+            f"{int(fields['NRestarts'])}"
+        ),
+    ]
+    if process and VERSION.fullmatch(fields.get("Version", "")):
+        lines.append(
+            f'ttcp_service_running_version_info{{server_id="{server_id}",'
+            f'version="{fields["Version"]}"}} 1'
+        )
     return lines
 
 
@@ -143,7 +189,12 @@ async def scrape_node(server, cipher, *, runner=None):
         if process.returncode != 0:
             return []
         try:
-            return filter_metrics(stdout, str(server.id))
+            node_raw, marker, status_raw = stdout.rpartition(STATUS_MARKER)
+            if not marker:
+                node_raw = stdout
+            lines = filter_metrics(node_raw, str(server.id))
+            lines.extend(service_metrics(status_raw if marker else b"", str(server.id)))
+            return lines
         except (ValueError, UnicodeError):
             return []
 
@@ -152,7 +203,16 @@ async def collect(engine, encryption_key, *, scrape=scrape_node):
     cipher = Fernet(encryption_key.encode("ascii"))
     async with transaction(engine) as db:
         servers = list((await db.scalars(select(Server).order_by(Server.id))).all())
-    lines = ["# TYPE ttcp_server_info gauge", "# TYPE ttcp_node_scrape_success gauge"]
+    lines = [
+        "# TYPE ttcp_server_info gauge",
+        "# TYPE ttcp_node_scrape_success gauge",
+        "# TYPE ttcp_service_probe_success gauge",
+        "# TYPE ttcp_service_state_info gauge",
+        "# TYPE ttcp_service_active gauge",
+        "# TYPE ttcp_process_running gauge",
+        "# TYPE ttcp_service_automatic_restarts_total counter",
+        "# TYPE ttcp_service_running_version_info gauge",
+    ]
     enabled = [server for server in servers if server.enabled]
     results = await asyncio.gather(
         *(scrape(server, cipher) for server in enabled), return_exceptions=True

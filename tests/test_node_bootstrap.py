@@ -263,8 +263,8 @@ def test_atomic_write_is_idempotent(tmp_path):
 @pytest.mark.parametrize(
     "reply,code,args,expected",
     [
-        ("LoadState=loaded\nActiveState=active", 0, [], 0),
-        ("LoadState=not-found\nActiveState=inactive", 1, [], 0),
+        ("LoadState=loaded\nActiveState=active\nMainPID=0\nNRestarts=1", 0, [], 0),
+        ("LoadState=not-found\nActiveState=inactive\nMainPID=0\nNRestarts=0", 1, [], 0),
         ("", 1, [], 1),
         ("LoadState=loaded", 0, ["restart"], 64),
         ("LoadState=loaded", 0, ["; touch injected"], 64),
@@ -280,7 +280,8 @@ def test_fixed_helper_behavior(tmp_path, reply, code, args, expected):
     # argument gate and missing-service/error handling in an actual shell.
     command = (
         "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \\\n"
-        "    /usr/bin/systemctl show trusttunnel.service --property=LoadState,ActiveState,SubState"
+        "    /usr/bin/systemctl show trusttunnel.service \\\n"
+        "    --property=LoadState,ActiveState,SubState,MainPID,NRestarts"
     )
     fake = f"printf '%s\\n' '{reply}'; exit {code}"
     assert command in bootstrap.STATUS
@@ -289,3 +290,41 @@ def test_fixed_helper_behavior(tmp_path, reply, code, args, expected):
     result = subprocess.run([bash, str(helper), *args], capture_output=True, text=True)
     assert result.returncode == expected
     assert not (tmp_path / "injected").exists()
+    assert '/usr/bin/timeout 2 "/proc/$pid/exe" --version' in bootstrap.STATUS
+
+
+@pytest.mark.parametrize(
+    "version_output,expected",
+    [
+        ("trusttunnel_endpoint 1.0.41", "Version=1.0.41"),
+        ("trusttunnel_endpoint 1.0.41-rc", ""),
+    ],
+)
+def test_fixed_helper_running_version_is_validated(tmp_path, version_output, expected):
+    bash = shutil.which("bash")
+    if not bash and Path("C:/Program Files/Git/bin/bash.exe").exists():
+        bash = "C:/Program Files/Git/bin/bash.exe"
+    if not bash:
+        pytest.skip("shell unavailable")
+    command = (
+        "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \\\n"
+        "    /usr/bin/systemctl show trusttunnel.service \\\n"
+        "    --property=LoadState,ActiveState,SubState,MainPID,NRestarts"
+    )
+    script = bootstrap.STATUS.replace(
+        command,
+        "printf 'LoadState=loaded\\nActiveState=active\\nSubState=running\\n"
+        "MainPID=42\\nNRestarts=2\\n'",
+    )
+    script = script.replace('[ -e "/proc/$pid/exe" ]', "true")
+    script = script.replace(
+        '/usr/bin/timeout 2 "/proc/$pid/exe" --version',
+        f"printf '%s\\n' '{version_output}'",
+    )
+    helper = tmp_path / "helper.sh"
+    helper.write_text(script, newline="\n")
+    result = subprocess.run([bash, str(helper)], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert expected in result.stdout
+    if not expected:
+        assert "Version=" not in result.stdout

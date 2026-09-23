@@ -83,6 +83,7 @@ dc exec -T grafana wget -qO- http://victoriametrics:8428/health
 dc exec -T grafana wget -qO- http://127.0.0.1:3000/api/health | grep -q '"database"[[:space:]]*:[[:space:]]*"ok"'
 dc exec -T metrics-collector python -m apps.shared.healthcheck monitoring
 dc exec -T victoriametrics wget -qO- http://metrics-collector:9101/metrics | grep -q '# TYPE ttcp_node_scrape_success gauge'
+dc exec -T victoriametrics wget -qO- http://metrics-collector:9101/metrics | grep -q '# TYPE ttcp_service_active gauge'
 for attempt in $(seq 1 12); do
     if dc exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up%7Bjob%3D%22ttcp-managed-nodes%22%7D' | grep -q 'ttcp-managed-nodes'; then
         break

@@ -134,6 +134,12 @@ VictoriaMetrics собирает собственные метрики и `metri
 с сервером в PostgreSQL. `ttcp_server_info` содержит текущий статус Control Plane,
 `ttcp_node_scrape_success` — результат SSH/exporter, а `up` — доступность
 collector. Отказ мониторинга не меняет VPN или записи о серверах.
+Service, process, automatic restart count and running version are exposed as
+`ttcp_service_active`, `ttcp_process_running`,
+`ttcp_service_automatic_restarts_total` and
+`ttcp_service_running_version_info`. `ttcp_service_probe_success` distinguishes
+an unavailable fixed helper from an inactive VPN service. Version is absent
+when the running binary cannot return a validated version.
 
 ## Проверки и сброс
 

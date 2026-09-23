@@ -6,7 +6,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from apps.monitoring import collector
-from apps.monitoring.collector import filter_metrics, scrape_node
+from apps.monitoring.collector import filter_metrics, scrape_node, service_metrics
 from apps.persistence.database import transaction
 from apps.persistence.models import Server
 from tests.test_migrations import database  # noqa: F401
@@ -40,6 +40,40 @@ def test_exporter_samples_are_scoped_and_bounded():
         filter_metrics(b"node_load1 1\n" * 200_000, "server-1")
 
 
+def test_fixed_service_report_exposes_only_bounded_metrics():
+    report = (
+        b"LoadState=loaded\nActiveState=active\nSubState=running\n"
+        b"MainPID=123\nNRestarts=4\nVersion=1.0.41\n"
+    )
+    lines = service_metrics(report, "server-1")
+    assert 'ttcp_service_probe_success{server_id="server-1"} 1' in lines
+    assert 'ttcp_service_active{server_id="server-1"} 1' in lines
+    assert 'ttcp_process_running{server_id="server-1"} 1' in lines
+    assert 'ttcp_service_automatic_restarts_total{server_id="server-1"} 4' in lines
+    assert 'ttcp_service_running_version_info{server_id="server-1",version="1.0.41"} 1' in lines
+    assert not any("123" in line for line in lines)
+    assert service_metrics(
+        report.replace(b"Version=1.0.41", b"Version=unsafe-value"), "server-1"
+    ) == [line for line in lines if "running_version" not in line]
+
+
+def test_missing_service_and_malformed_report():
+    missing = b"LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\nNRestarts=0\n"
+    lines = service_metrics(missing, "server-1")
+    assert 'ttcp_service_active{server_id="server-1"} 0' in lines
+    assert 'ttcp_process_running{server_id="server-1"} 0' in lines
+    assert not any("running_version" in line for line in lines)
+    assert service_metrics(b"arbitrary output", "server-1") == [
+        'ttcp_service_probe_success{server_id="server-1"} 0'
+    ]
+    assert service_metrics(missing + b"Secret=unexpected\n", "server-1") == [
+        'ttcp_service_probe_success{server_id="server-1"} 0'
+    ]
+    assert service_metrics(missing + b"MainPID=123\n", "server-1") == [
+        'ttcp_service_probe_success{server_id="server-1"} 0'
+    ]
+
+
 @pytest.mark.asyncio
 async def test_pinned_ssh_scrape_uses_existing_loopback_exporter():
     cipher = Fernet(Fernet.generate_key())
@@ -66,7 +100,8 @@ async def test_pinned_ssh_scrape_uses_existing_loopback_exporter():
 
     node = server(cipher)
     assert await scrape_node(node, cipher, runner=runner) == [
-        f'node_load1{{server_id="{node.id}"}} 2'
+        f'node_load1{{server_id="{node.id}"}} 2',
+        f'ttcp_service_probe_success{{server_id="{node.id}"}} 0',
     ]
     assert "-L" not in observed and "-R" not in observed
 
@@ -82,6 +117,40 @@ async def test_missing_credentials_do_not_start_ssh():
         await scrape_node(server(cipher, ssh_private_ciphertext=None), cipher, runner=forbidden)
         == []
     )
+
+
+@pytest.mark.asyncio
+async def test_node_and_service_reports_share_one_pinned_ssh_scrape():
+    cipher = Fernet(Fernet.generate_key())
+    node = server(cipher)
+    raw = (
+        b"node_load1 2\n# TTCP_STATUS_BEGIN\n"
+        b"LoadState=loaded\nActiveState=active\nSubState=running\n"
+        b"MainPID=77\nNRestarts=2\nVersion=1.0.41\n"
+    )
+
+    class Output:
+        async def read(self, count):
+            return raw
+
+    class Process:
+        stdout = Output()
+        returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def runner(*argv, **kwargs):
+        assert "/usr/local/sbin/ttcp-node-status" in argv[-1]
+        assert "/usr/bin/sudo -n /usr/local/sbin/ttcp-node-status" in argv[-1]
+        return Process()
+
+    lines = await scrape_node(node, cipher, runner=runner)
+    assert f'node_load1{{server_id="{node.id}"}} 2' in lines
+    assert f'ttcp_service_active{{server_id="{node.id}"}} 1' in lines
+    assert f'ttcp_process_running{{server_id="{node.id}"}} 1' in lines
+    assert f'ttcp_service_automatic_restarts_total{{server_id="{node.id}"}} 2' in lines
+    assert f'ttcp_service_running_version_info{{server_id="{node.id}",version="1.0.41"}} 1' in lines
 
 
 @pytest.mark.asyncio

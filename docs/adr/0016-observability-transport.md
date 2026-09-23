@@ -11,9 +11,17 @@ keep SSH forwarding disabled for `ttcp`. A separate, read-only Control Plane
 collector reads enabled server records and their encrypted management identities
 from PostgreSQL. For each configured `ttcp` node, it uses OpenSSH with the stored
 host-key pin and a fixed remote Python command to read node_exporter over node
-loopback. The management identity is materialized only in a private temporary
-directory during the scrape. No SSH forwarding, sudo, additional node agent,
-public exporter port, or node firewall change is required.
+loopback. The same SSH invocation runs TTCP-010's no-argument, root-owned
+status helper through its exact sudoers rule. The helper reads only fixed
+systemd properties. When the service has a main process, it asks that running
+executable for its documented `--version` with a two-second timeout; only a
+strict numeric version is exposed. The management identity is materialized
+only in a private temporary directory during the scrape. No SSH forwarding,
+generic sudo, additional node agent, public exporter port, or node firewall
+change is required.
+
+The endpoint's `--version` behavior is documented in the upstream
+[command-line reference](https://github.com/TrustTunnel/TrustTunnel/blob/master/CONFIGURATION.md#command-line-arguments).
 
 VictoriaMetrics scrapes the collector every 30 seconds on a private Compose
 network. Samples carry the immutable Control Plane `server_id`; a separate
@@ -22,6 +30,11 @@ status from PostgreSQL. `ttcp_node_scrape_success` distinguishes unavailable
 node metrics from a healthy collector. `up{job="ttcp-managed-nodes"}` distinguishes
 collector failure. Control Plane status still means management reachability and
 does not become VPN service health. Scraping never writes server state or jobs.
+
+Service state, process presence, automatic restart count, and available running
+version are separate metrics. `NRestarts` counts systemd automatic restarts,
+not operator-initiated restarts. Missing or invalid helper output sets
+`ttcp_service_probe_success` to zero without discarding host metrics.
 
 The collector selects only the node metric families needed for this MVP and
 bounds each response to 2 MiB and 10,000 selected samples. SSH has a 5-second
@@ -43,3 +56,5 @@ An existing server registered under an SSH user other than `ttcp`, without a
 key, or without a pinned host key reports scrape failure. The operator should
 complete TTCP-010 onboarding and register the matching identity. A live managed
 node and Linux Docker host are needed to validate the full SSH transport.
+Nodes bootstrapped before this helper extension need an idempotent TTCP-010
+rebootstrap with the same public key before the service metrics are available.
