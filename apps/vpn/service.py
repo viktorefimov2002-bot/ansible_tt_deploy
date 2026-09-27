@@ -6,15 +6,17 @@ from hashlib import sha256
 from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import undefer
 
 from apps.jobs.service import record
 from apps.persistence.database import transaction
 from apps.persistence.models import (
     AuditEvent,
+    ClientSession,
     Device,
     DeviceCredential,
+    Invitation,
     Job,
     Server,
     ServerAccess,
@@ -71,10 +73,12 @@ class VpnService:
         self.engine = engine
         self.cipher = Fernet(key.encode("ascii")) if key else None
 
-    def audit(self, db, actor, action, target_type, target_id, request_id, details=None):
+    def audit(
+        self, db, actor, action, target_type, target_id, request_id, details=None, actor_type=None
+    ):
         db.add(
             AuditEvent(
-                actor_type="admin" if actor else "system",
+                actor_type=actor_type or ("admin" if actor else "system"),
                 actor_id=actor,
                 action=action,
                 target_type=target_type,
@@ -227,7 +231,27 @@ class VpnService:
                 ).all()
             ]
 
-    async def create_device(self, user_id, body, actor, request_id):
+    async def list_accessible_servers(self, user_id):
+        async with transaction(self.engine) as db:
+            user = await db.get(VpnUser, user_id)
+            if user is None:
+                raise VpnError(404, "VPN user not found")
+            query = select(Server).where(Server.enabled).order_by(Server.name)
+            if user.access_mode == "selected":
+                query = query.join(ServerAccess, ServerAccess.server_id == Server.id).where(
+                    ServerAccess.user_id == user_id
+                )
+            return [
+                {
+                    "id": server.id,
+                    "name": server.name,
+                    "location": server.location,
+                    "status": server.status,
+                }
+                for server in (await db.scalars(query)).all()
+            ]
+
+    async def create_device(self, user_id, body, actor, request_id, *, client_actor=None):
         async with transaction(self.engine) as db:
             user = await self._user(db, user_id)
             self._require_active(user)
@@ -241,10 +265,18 @@ class VpnService:
             device = Device(user_id=user_id, **body.model_dump())
             db.add(device)
             await db.flush()
-            self.audit(db, actor, "device.create", "device", device.id, request_id)
+            self.audit(
+                db,
+                client_actor or actor,
+                "device.create",
+                "device",
+                device.id,
+                request_id,
+                actor_type="vpn_user" if client_actor else None,
+            )
             return device_view(device)
 
-    async def revoke_device(self, user_id, device_id, actor, request_id):
+    async def revoke_device(self, user_id, device_id, actor, request_id, *, client_actor=None):
         async with transaction(self.engine) as db:
             await self._user(db, user_id)
             device = await db.scalar(
@@ -257,7 +289,15 @@ class VpnService:
             if device.enabled:
                 device.enabled = False
                 device.revoked_at = await db.scalar(select(func.clock_timestamp()))
-                self.audit(db, actor, "device.revoke", "device", device.id, request_id)
+                self.audit(
+                    db,
+                    client_actor or actor,
+                    "device.revoke",
+                    "device",
+                    device.id,
+                    request_id,
+                    actor_type="vpn_user" if client_actor else None,
+                )
             for credential in (
                 await db.scalars(
                     select(DeviceCredential)
@@ -265,7 +305,9 @@ class VpnService:
                     .with_for_update()
                 )
             ).all():
-                await self._revoke_credential(db, credential, actor, request_id)
+                await self._revoke_credential(
+                    db, credential, actor, request_id, client_actor=client_actor
+                )
             return device_view(device)
 
     @staticmethod
@@ -327,7 +369,9 @@ class VpnService:
         record(job, "queued", await db.scalar(select(func.clock_timestamp())))
         return job
 
-    async def create_credential(self, user_id, device_id, server_id, actor, request_id):
+    async def create_credential(
+        self, user_id, device_id, server_id, actor, request_id, *, client_actor=None
+    ):
         if self.cipher is None:
             raise VpnError(503, "Management encryption unavailable")
         async with transaction(self.engine) as db:
@@ -388,16 +432,17 @@ class VpnService:
             job = await self._job(db, credential, "credential.create", actor, request_id)
             self.audit(
                 db,
-                actor,
+                client_actor or actor,
                 "credential.create",
                 "credential",
                 credential.id,
                 request_id,
                 {"job_id": str(job.id)},
+                actor_type="vpn_user" if client_actor else None,
             )
             return job
 
-    async def _revoke_credential(self, db, credential, actor, request_id):
+    async def _revoke_credential(self, db, credential, actor, request_id, *, client_actor=None):
         if credential.status == "revoked":
             return None
         credential.status = "revoking"
@@ -406,12 +451,13 @@ class VpnService:
         job = await self._job(db, credential, "credential.revoke", actor, request_id)
         self.audit(
             db,
-            actor,
+            client_actor or actor,
             "credential.revoke",
             "credential",
             credential.id,
             request_id,
             {"job_id": str(job.id)},
+            actor_type="vpn_user" if client_actor else None,
         )
         return job
 
@@ -432,6 +478,20 @@ class VpnService:
             return job, credential_view(credential)
 
     async def _revoke_user(self, db, user, actor, request_id):
+        await db.execute(
+            update(ClientSession)
+            .where(ClientSession.user_id == user.id, ClientSession.revoked_at.is_(None))
+            .values(revoked_at=func.clock_timestamp())
+        )
+        await db.execute(
+            update(Invitation)
+            .where(
+                Invitation.user_id == user.id,
+                Invitation.used_at.is_(None),
+                Invitation.revoked_at.is_(None),
+            )
+            .values(revoked_at=func.clock_timestamp())
+        )
         credentials = (
             await db.scalars(
                 select(DeviceCredential)

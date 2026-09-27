@@ -9,6 +9,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from apps.api.auth import router
 from apps.api.auth_service import AuthService
+from apps.api.client import admin_invites
+from apps.api.client import router as client_router
+from apps.api.client_auth_service import ClientAuthService
 from apps.api.jobs import router as jobs_router
 from apps.api.servers import router as servers_router
 from apps.api.vpn import router as vpn_router
@@ -42,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if configured.auth_encryption_key
                 else None,
             )
+            app.state.client_auth = ClientAuthService(dependencies.engine)
             app.state.auth = (
                 AuthService(
                     dependencies.engine,
@@ -63,6 +67,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(servers_router)
     app.include_router(vpn_router)
+    app.include_router(admin_invites)
+    app.include_router(client_router)
 
     @app.exception_handler(ServerError)
     async def server_error(request, exc):
@@ -78,7 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         if request.url.path.startswith(
-            ("/api/auth", "/api/jobs", "/api/servers", "/api/vpn-users")
+            ("/api/auth", "/api/jobs", "/api/servers", "/api/vpn-users", "/api/client")
         ):
             response.headers["Cache-Control"] = "no-store"
         return response

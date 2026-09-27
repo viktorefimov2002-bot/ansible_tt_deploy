@@ -70,6 +70,25 @@ class AdminSession(Identity, Base):
     revoked_at: Mapped[datetime | None]
 
 
+class Invitation(Identity, Base):
+    __tablename__ = "invitations"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("vpn_users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    used_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]
+
+
+class ClientSession(Identity, Base):
+    __tablename__ = "client_sessions"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("vpn_users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None]
+
+
 class VpnUser(Identity, Updated, Base):
     __tablename__ = "vpn_users"
     __table_args__ = (
