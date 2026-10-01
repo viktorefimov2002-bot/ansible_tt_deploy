@@ -8,6 +8,7 @@ PostgreSQL/Redis clients (`apps/shared`). Основание — разделы 
 Alembic migrations и transaction helper в `apps/persistence`;
 [схема и команды](../docs/persistence.md). TTCP-014 добавляет [Client Portal](../docs/client-portal.md) в `apps/client-web`.
 TTCP-009 добавляет [server CRUD и pre-flight/status jobs](../docs/servers.md).
+TTCP-016 добавляет [Admin monitoring, audit и notifications](../docs/admin-visibility.md).
 TTCP-008 добавляет [execution adapter](../docs/execution.md).
 TTCP-007 добавляет [durable jobs и SSE logs](../docs/jobs.md).
 TTCP-006 добавляет административную аутентификацию и RBAC;

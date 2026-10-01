@@ -5,6 +5,9 @@ import { Button } from "./ui/button";
 import { ConfirmAction } from "./ConfirmAction";
 import { ServerForm } from "./ServerForm";
 import { UserDetails, UserForm } from "./UserDetails";
+import { AuditView } from "./AuditView";
+import { NotificationsView } from "./NotificationsView";
+import { MonitoringView } from "./MonitoringView";
 
 const pages: Page[] = [
   "Dashboard",
@@ -12,6 +15,9 @@ const pages: Page[] = [
   "VPN users",
   "Invitations",
   "Jobs",
+  "Monitoring",
+  "Audit",
+  "Notifications",
 ];
 export function AdminView({ admin }: { admin: AdminState }) {
   const writable = admin.principal?.role === "admin";
@@ -97,6 +103,15 @@ export function AdminView({ admin }: { admin: AdminState }) {
               onClick={() => admin.navigate(page)}
             >
               {page}
+              {page === "Notifications" &&
+                !!admin.notifications?.unread_count && (
+                  <span
+                    className="notification-count"
+                    aria-label={`${admin.notifications.unread_count} unread`}
+                  >
+                    {admin.notifications.unread_count}
+                  </span>
+                )}
             </Button>
           ))}
         </nav>
@@ -121,7 +136,13 @@ export function AdminView({ admin }: { admin: AdminState }) {
           </div>
           <Button
             variant="outline"
-            disabled={admin.busy || admin.loading}
+            disabled={
+              admin.busy ||
+              admin.loading ||
+              (admin.page === "Monitoring" && admin.monitoringLoading) ||
+              (admin.page === "Audit" && admin.auditLoading) ||
+              (admin.page === "Notifications" && admin.notificationsLoading)
+            }
             onClick={admin.refresh}
           >
             Refresh
@@ -143,6 +164,9 @@ export function AdminView({ admin }: { admin: AdminState }) {
           </p>
         )}
         {admin.loading && <p role="status">Loading latest state…</p>}
+        {admin.page === "Monitoring" && <MonitoringView admin={admin} />}
+        {admin.page === "Audit" && <AuditView admin={admin} />}
+        {admin.page === "Notifications" && <NotificationsView admin={admin} />}
         {admin.page === "Dashboard" && (
           <>
             <div className="stats">

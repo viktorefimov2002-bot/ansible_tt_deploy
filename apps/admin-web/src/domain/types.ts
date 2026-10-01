@@ -3,7 +3,10 @@ export type Page =
   | "Servers"
   | "VPN users"
   | "Invitations"
-  | "Jobs";
+  | "Jobs"
+  | "Monitoring"
+  | "Audit"
+  | "Notifications";
 export interface Principal {
   id: string;
   username: string;
@@ -96,4 +99,87 @@ export function invitationStatus(invitation: Invitation) {
   return Date.parse(invitation.expires_at) <= Date.now()
     ? "Expired"
     : "Available";
+}
+
+export interface AuditEvent {
+  id: string;
+  created_at: string;
+  actor_type: string;
+  actor_id: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  request_id: string | null;
+  result: string;
+}
+export interface AuditFilters {
+  action?: string;
+  actor_type?: string;
+  actor_id?: string;
+  target_type?: string;
+  target_id?: string;
+  result?: string;
+  since?: string;
+  until?: string;
+  request_id?: string;
+}
+export interface ListPage<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+export interface Notification {
+  id: string;
+  created_at: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  message: string;
+  target_type: string;
+  target_id: string | null;
+  request_id: string | null;
+  read_at: string | null;
+}
+export interface NotificationPage extends ListPage<Notification> {
+  unread_count: number;
+}
+export type MonitoringWindow = "1h" | "6h" | "24h";
+export type DependencyHealth = "healthy" | "unavailable";
+export interface Metrics {
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  load1: number | null;
+  disk_percent: number | null;
+  network_receive_bytes_per_second: number | null;
+  network_transmit_bytes_per_second: number | null;
+}
+export interface MonitoredServer {
+  id: string;
+  name: string;
+  enabled: boolean;
+  management_status: string;
+  last_seen_at: string | null;
+  health: "healthy" | "degraded" | "unavailable" | "unknown" | "disabled";
+  observed_at: string | null;
+  metrics: Metrics;
+  service: {
+    probe: DependencyHealth | "unknown";
+    active: boolean | null;
+    process_running: boolean | null;
+    automatic_restarts: number | null;
+  };
+  recent: (Metrics & { at: string })[];
+}
+export interface Monitoring {
+  generated_at: string;
+  window: MonitoringWindow;
+  step_seconds: number;
+  system: {
+    status: "healthy" | "degraded";
+    postgres: DependencyHealth;
+    redis: DependencyHealth;
+    victoriametrics: DependencyHealth;
+    collector: DependencyHealth | "unknown";
+  };
+  servers: MonitoredServer[];
 }

@@ -282,7 +282,21 @@ class JobService:
                 if reachable:
                     server.last_seen_at = now
 
-    def _failure(self, job, now, code, retryable, *, acknowledge_cancel=True):
+    def _terminal_audit(self, db, job):
+        if job.status not in ("succeeded", "failed"):
+            return
+        db.add(
+            AuditEvent(
+                actor_type="system",
+                action="job." + job.status,
+                target_type="job",
+                target_id=job.id,
+                request_id=job.request_id,
+                result="success" if job.status == "succeeded" else "failure",
+            )
+        )
+
+    def _failure(self, db, job, now, code, retryable, *, acknowledge_cancel=True):
         job.error_code, job.error_message = code, MESSAGES[code]
         if acknowledge_cancel and job.cancel_requested_at and job.cancellable:
             finish(job, "cancelled", now)
@@ -298,6 +312,7 @@ class JobService:
         else:
             finish(job, "failed", now)
             record(job, code, now)
+            self._terminal_audit(db, job)
 
     async def complete(
         self, job_id: UUID, token: UUID, *, code: str | None = None, retryable: bool = False
@@ -305,13 +320,14 @@ class JobService:
         async with transaction(self.engine) as db:
             job, now = await self._owned(db, job_id, token)
             if code:
-                self._failure(job, now, code, retryable)
+                self._failure(db, job, now, code, retryable)
             else:
                 cancelled = job.cancel_requested_at is not None and job.cancellable
                 finish(job, "cancelled" if cancelled else "succeeded", now)
                 job.progress = job.progress if cancelled else 100
                 job.error_code = job.error_message = None
                 record(job, job.status, now)
+                self._terminal_audit(db, job)
             events = job.history[-2:]
         for event in events:
             await self.publish(job_id, event)
@@ -331,6 +347,7 @@ class JobService:
                 # A lost worker cannot acknowledge reaching a safe checkpoint.
                 retryable = job.replay_safe and job.cancel_requested_at is None
                 self._failure(
+                    db,
                     job,
                     now,
                     "worker_lost" if retryable else "unsafe_outcome",

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminApi, ApiError, invitationLink } from "../api/admin";
+import { useVisibility } from "./useVisibility";
 import type {
   Credential,
   Device,
@@ -38,6 +39,7 @@ export function useAdmin() {
   const [loading, setLoading] = useState(false);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [revision, setRevision] = useState(0);
+  const visibility = useVisibility(api, principal, page, revision);
   const session = useRef(0);
   const userSelection = useRef("");
   const mutation = useRef(false);
@@ -396,6 +398,7 @@ export function useAdmin() {
       ),
   };
   return {
+    ...visibility,
     principal,
     restoring,
     page,

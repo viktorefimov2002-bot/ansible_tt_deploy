@@ -66,6 +66,9 @@ class Settings(AuthSettings):
     api_host: str = Field(default="0.0.0.0", min_length=1)
     api_port: Port = 8080
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    victoriametrics_host: str = Field(default="victoriametrics", pattern=r"^[A-Za-z0-9.-]{1,253}$")
+    victoriametrics_port: Port = 8428
+    monitoring_timeout: float = Field(default=3, ge=0.1, le=10, allow_inf_nan=False)
 
     @field_validator("redis_password")
     @classmethod

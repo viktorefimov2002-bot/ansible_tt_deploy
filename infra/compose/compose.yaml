@@ -89,11 +89,13 @@ services:
       # Omit the key to keep the TTCP-004 health-only runtime; auth fails closed.
       TTCP_AUTH_ENCRYPTION_KEY: ${TTCP_AUTH_ENCRYPTION_KEY:-}
       TTCP_AUTH_SESSION_SECONDS: ${TTCP_AUTH_SESSION_SECONDS:-28800}
+      TTCP_VICTORIAMETRICS_HOST: victoriametrics
+      TTCP_VICTORIAMETRICS_PORT: 8428
     command: [python, -m, apps.api]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    networks: [application, database, queue]
+    networks: [application, database, queue, metrics]
     mem_limit: 192m
     stop_grace_period: 30s
     depends_on:

@@ -54,6 +54,14 @@ beforeEach(() => {
           role,
           session_id: "session",
         });
+      if (path === "/notifications")
+        return response({
+          items: [],
+          total: 0,
+          unread_count: 0,
+          offset: 0,
+          limit: 50,
+        });
       if (method !== "GET" && denyMutation) return response({}, 403);
       const job = {
         id: "j",

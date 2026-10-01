@@ -15,6 +15,8 @@
 до конфигурации TrustTunnel (TTCP-014).
 [Admin Web](docs/admin-web.md) предоставляет управление серверами, VPN users,
 приглашениями и jobs на отдельном origin (TTCP-015).
+[Мониторинг, аудит и уведомления](docs/admin-visibility.md) завершают операционную
+видимость Admin Web (TTCP-016).
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

@@ -207,6 +207,10 @@ def test_origins_cannot_reach_each_others_api_even_with_credentials(edge, host, 
         ("GET", f"/api/jobs/{identity}"),
         ("GET", f"/api/jobs/{identity}/logs"),
         ("POST", f"/api/jobs/{identity}/cancel"),
+        ("GET", "/api/monitoring"),
+        ("GET", "/api/audit"),
+        ("GET", "/api/notifications"),
+        ("PUT", f"/api/notifications/{identity}/read"),
     ]
     client_routes = [
         ("POST", "/api/client/exchange"),
@@ -286,6 +290,10 @@ def test_production_tls_hosts_use_disjoint_api_allowlists(edge):
                     "/api/servers",
                     "/api/vpn-users",
                     f"/api/jobs/{identity}/logs",
+                    "/api/monitoring",
+                    "/api/audit",
+                    "/api/notifications",
+                    f"/api/notifications/{identity}/read",
                 ],
             ),
             (
@@ -311,3 +319,54 @@ def test_production_tls_hosts_use_disjoint_api_allowlists(edge):
                 assert denied.status_code == 404
                 assert "access-control-allow-origin" not in denied.headers
             assert len(received) == before
+
+
+@pytest.mark.parametrize("edge", ["development", "production"], indirect=True)
+def test_visibility_allowlist_is_exact_and_restricted_to_supported_methods(edge, request):
+    port, received = edge
+    production = request.node.callspec.params["edge"] == "production"
+    scheme = "https" if production else "http"
+    identity = "11111111-1111-1111-1111-111111111111"
+    headers = {"Host": "admin.localhost", "Authorization": "Bearer " + "A" * 43}
+    extensions = {"sni_hostname": "admin.localhost"} if production else {}
+    reads = (
+        "/api/monitoring?window=6h",
+        "/api/audit?limit=2&offset=2&result=denied",
+        "/api/notifications?limit=2&offset=2&unread_only=true",
+    )
+    receipt = f"/api/notifications/{identity}/read"
+    with httpx.Client(base_url=f"{scheme}://127.0.0.1:{port}", verify=False, timeout=3) as http:
+        before = len(received)
+        for path in reads:
+            allowed = http.request("GET", path, headers=headers, extensions=extensions)
+            assert allowed.status_code == 401, path
+            assert allowed.headers["cache-control"] == "no-store"
+        allowed = http.request(
+            "PUT", receipt, json={"read": True}, headers=headers, extensions=extensions
+        )
+        assert allowed.status_code == 401
+        assert allowed.headers["cache-control"] == "no-store"
+        assert len(received) == before + len(reads) + 1
+        before = len(received)
+        for path, methods in (
+            *((path, ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")) for path in reads),
+            (receipt, ("GET", "POST", "PATCH", "DELETE", "OPTIONS")),
+        ):
+            for method in methods:
+                denied = http.request(method, path, headers=headers, extensions=extensions)
+                assert denied.status_code == 403, (method, path)
+                assert "access-control-allow-origin" not in denied.headers
+                assert denied.headers["cache-control"] == "no-store"
+        for path in (
+            "/api/monitoring/query",
+            "/api/audit/" + identity,
+            "/api/notifications/" + identity,
+            receipt + "/extra",
+            "/api/notifications/invalid/read",
+            f"/api/notifications/{identity}/unread",
+            "/api/v1/query",
+            "/api/metrics",
+        ):
+            denied = http.request("GET", path, headers=headers, extensions=extensions)
+            assert denied.status_code == 404, path
+        assert len(received) == before

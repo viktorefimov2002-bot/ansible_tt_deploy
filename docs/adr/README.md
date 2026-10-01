@@ -25,6 +25,7 @@ ADR фиксирует контекст, выбранное решение и е
 | [0016 — Observability transport](0016-observability-transport.md) | Proposed; implemented in TTCP-011, live-node acceptance pending |
 | [0017 — Client Portal cookie sessions](0017-client-cookie-session.md) | Proposed; implemented in TTCP-014 follow-up |
 | [0018 — Admin Web browser sessions and separate origins](0018-admin-web-origins.md) | Proposed; implemented in TTCP-015 |
+| [0019 — Admin visibility and durable notification receipts](0019-admin-visibility.md) | Proposed; implemented in TTCP-016 |
 
 Решения, уже установленные спецификацией, сохраняют силу независимо от отсутствия отдельных ADR; их последующее оформление не должно выдумывать историю согласования.
 

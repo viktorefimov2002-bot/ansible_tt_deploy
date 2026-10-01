@@ -40,8 +40,9 @@ def config():
 
 def test_ordered_reproducible_offline_migrations():
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0008_client_config"]
+    assert scripts.get_heads() == ["0009_notifications"]
     assert [r.revision for r in scripts.walk_revisions()] == [
+        "0009_notifications",
         "0008_client_config",
         "0007_client_auth",
         "0006_vpn_lifecycle",
@@ -334,7 +335,9 @@ async def test_audit_is_immutable_and_survives_actor_deletion(database):
     for sql in [
         "UPDATE audit_events SET result='changed'",
         "DELETE FROM audit_events",
-        "TRUNCATE audit_events",
+        # Include referenced read receipts so this exercises the immutable-audit
+        # trigger, rather than PostgreSQL's earlier FK TRUNCATE rejection.
+        "TRUNCATE audit_events CASCADE",
     ]:
         with pytest.raises(IntegrityError):
             async with database.begin() as connection:

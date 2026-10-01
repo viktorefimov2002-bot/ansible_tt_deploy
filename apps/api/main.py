@@ -13,13 +13,18 @@ from apps.api.client import admin_invites, clear_client_cookie
 from apps.api.client import router as client_router
 from apps.api.client_auth_service import ClientAuthService
 from apps.api.jobs import router as jobs_router
+from apps.api.monitoring import router as monitoring_router
 from apps.api.servers import router as servers_router
+from apps.api.visibility import router as visibility_router
 from apps.api.vpn import router as vpn_router
 from apps.jobs.redis import RedisTransport
 from apps.jobs.service import JobService
+from apps.monitoring.query import MetricsClient
+from apps.monitoring.service import MonitoringService
 from apps.servers.service import ServerError, ServerService
 from apps.shared.config import Settings, load_settings
 from apps.shared.dependencies import connected_dependencies
+from apps.visibility.service import VisibilityService
 from apps.vpn.service import VpnError, VpnService
 
 logger = logging.getLogger(__name__)
@@ -31,6 +36,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured = settings or load_settings()
         async with connected_dependencies(configured) as dependencies:
             app.state.dependencies = dependencies
+            metrics = MetricsClient(
+                configured.victoriametrics_host,
+                configured.victoriametrics_port,
+                configured.monitoring_timeout,
+            )
+            app.state.monitoring = MonitoringService(dependencies.engine, dependencies, metrics)
+            app.state.visibility = VisibilityService(dependencies.engine)
             transport = RedisTransport(dependencies.redis)
             app.state.jobs = JobService(dependencies.engine, transport, transport)
             app.state.servers = ServerService(
@@ -60,11 +72,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yield
             finally:
                 logger.info("api_stopping")
+                await metrics.close()
         logger.info("api_stopped")
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
     app.include_router(jobs_router)
+    app.include_router(monitoring_router)
+    app.include_router(visibility_router)
     app.include_router(servers_router)
     app.include_router(vpn_router)
     app.include_router(admin_invites)
@@ -84,7 +99,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         if (
             request.url.path.startswith(
-                ("/api/auth/", "/api/jobs", "/api/servers", "/api/vpn-users")
+                (
+                    "/api/auth/",
+                    "/api/jobs",
+                    "/api/servers",
+                    "/api/vpn-users",
+                    "/api/monitoring",
+                    "/api/audit",
+                    "/api/notifications",
+                )
             )
             and request.url.path != "/api/auth/login"
             and response.status_code == 401
@@ -98,7 +121,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             clear_client_cookie(response)
         response.headers["X-Request-ID"] = request.state.request_id
         if request.url.path.startswith(
-            ("/api/auth", "/api/jobs", "/api/servers", "/api/vpn-users", "/api/client")
+            (
+                "/api/auth",
+                "/api/jobs",
+                "/api/servers",
+                "/api/vpn-users",
+                "/api/client",
+                "/api/monitoring",
+                "/api/audit",
+                "/api/notifications",
+            )
         ):
             response.headers["Cache-Control"] = "no-store"
         return response

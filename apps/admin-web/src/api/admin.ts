@@ -1,9 +1,16 @@
 import type {
+  AuditEvent,
+  AuditFilters,
   Credential,
   Device,
   Invitation,
   Job,
   LogEvent,
+  ListPage,
+  Monitoring,
+  MonitoringWindow,
+  Notification,
+  NotificationPage,
   Principal,
   Server,
   ServerInput,
@@ -147,6 +154,21 @@ export class AdminApi {
   jobs = (offset = 0) => this.request<Job[]>(`/jobs?offset=${offset}&limit=50`);
   job = (id: string) => this.request<Job>(`/jobs/${id}`);
   cancel = (id: string) => this.request(`/jobs/${id}/cancel`, "POST");
+  audit = (offset: number, filters: AuditFilters) => {
+    const query = new URLSearchParams({ offset: String(offset), limit: "50" });
+    Object.entries(filters).forEach(([name, value]) => {
+      if (value) query.set(name, value);
+    });
+    return this.request<ListPage<AuditEvent>>(`/audit?${query}`);
+  };
+  notifications = (offset = 0, unreadOnly = false) =>
+    this.request<NotificationPage>(
+      `/notifications?offset=${offset}&limit=50&unread_only=${unreadOnly}`,
+    );
+  notificationRead = (id: string, read: boolean) =>
+    this.request<Notification>(`/notifications/${id}/read`, "PUT", { read });
+  monitoring = (window: MonitoringWindow) =>
+    this.request<Monitoring>(`/monitoring?window=${window}`);
   async logs(
     id: string,
     signal: AbortSignal,

@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -218,6 +219,8 @@ class AuditEvent(Identity, Base):
     __table_args__ = (
         CheckConstraint("actor_type IN ('admin', 'vpn_user', 'system')", name="actor_type"),
         CheckConstraint("actor_type = 'system' OR actor_id IS NOT NULL", name="actor_required"),
+        Index("ix_audit_events_created_at_id", "created_at", "id"),
+        Index("ix_audit_events_action_result_created_at", "action", "result", "created_at"),
     )
 
     # Historical polymorphic references intentionally survive target/actor deletion.
@@ -229,6 +232,14 @@ class AuditEvent(Identity, Base):
     request_id: Mapped[str | None] = mapped_column(String(128), index=True)
     result: Mapped[str] = mapped_column(String(32))
     details: Mapped[dict] = mapped_column("metadata", JSONB, server_default=text("'{}'::jsonb"))
+
+
+class NotificationRead(Base):
+    __tablename__ = "notification_reads"
+
+    admin_id: Mapped[UUID] = mapped_column(ForeignKey("admins.id"), primary_key=True)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("audit_events.id"), primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class Job(Identity, Updated, Base):

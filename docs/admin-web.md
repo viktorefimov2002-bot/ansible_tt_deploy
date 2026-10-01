@@ -1,5 +1,8 @@
 # TTCP-015 — Admin Web core
 
+TTCP-016 adds [Monitoring, Audit and Notifications](admin-visibility.md), with
+authenticated backend summaries, filtered pagination and durable per-admin read state.
+
 ## Local runtime
 
 After configuring `infra/compose/.env` using the existing runtime instructions:

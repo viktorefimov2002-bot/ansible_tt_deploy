@@ -173,6 +173,7 @@ async def test_cookie_rechecks_authoritative_state(admin_app, auth, invalidate):
     ) as http:
         actor, credentials, _ = await account(auth)
         assert (await browser_login(http, credentials)).status_code == 200
+        cookie = http.cookies.get(ADMIN_COOKIE)
         async with transaction(auth.engine) as db:
             row = await db.scalar(select(AdminSession).where(AdminSession.admin_id == actor))
             if invalidate == "expired":
@@ -190,6 +191,13 @@ async def test_cookie_rechecks_authoritative_state(admin_app, auth, invalidate):
             assert (
                 await http.post("/api/vpn-users", headers=WEB, json={"display_name": "Denied"})
             ).status_code == 403
+            assert (
+                await http.put(
+                    f"/api/notifications/{uuid4()}/read", headers=WEB, json={"read": True}
+                )
+            ).status_code == 403
         else:
-            denied = await http.get("/api/auth/me", headers=WEB)
-            assert denied.status_code == 401 and "Max-Age=0" in denied.headers["set-cookie"]
+            for path in ("/api/auth/me", "/api/monitoring", "/api/audit", "/api/notifications"):
+                denied = await http.get(path, headers=WEB | {"Cookie": f"{ADMIN_COOKIE}={cookie}"})
+                assert denied.status_code == 401 and "Max-Age=0" in denied.headers["set-cookie"]
+                assert denied.headers["cache-control"] == "no-store"
