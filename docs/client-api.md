@@ -5,8 +5,11 @@ before starting the updated API. Invitation and client session rows are durable 
 PostgreSQL. Only SHA-256 token digests are stored. Redis holds only a one-minute
 exchange attempt counter keyed by a hash of the socket peer address; exchange fails
 closed if Redis is unavailable. The API allows 30 exchange attempts per peer per
-minute. Place the API behind HTTPS and add a trusted-edge per-client rate limit when
-multiple clients share the API's proxy peer address. Do not log request bodies or
+minute. NGINX additionally limits `/api/client/exchange` to 5 requests/minute
+per TCP edge client, with a burst of 5 and HTTP 429/no-store for excess requests.
+It never keys this bucket from arbitrary forwarded headers. The API socket-peer
+counter remains an aggregate defense when clients share a proxy peer. Place the
+public edge behind HTTPS. Do not log request bodies or
 Authorization headers at that edge.
 
 An admin bearer session can `POST /api/vpn-users/{user_id}/invitations` with optional
@@ -15,18 +18,34 @@ An admin bearer session can `POST /api/vpn-users/{user_id}/invitations` with opt
 on `/{invitation_id}` revokes an invitation. Viewer sessions cannot manage invitations.
 
 `POST /api/client/exchange` accepts `{"token": "..."}` and returns a client bearer
-`access_token` and `expires_at`. Used, revoked, expired and unknown invitations all
-return the same 401. Send that token only in `Authorization: Bearer` headers. Client
+`access_token` and `expires_at` for the existing bearer/CLI contract. The portal
+sends `session_mode: "cookie"` and `X-TTCP-Client: portal`; that response returns only
+`expires_at` and `token_type: "cookie"` and sets a host-only `__Secure-ttcp_client`
+cookie with Secure, HttpOnly, SameSite=Strict, Path=/api/client, and the session's
+absolute expiry/Max-Age. No session token is exposed to browser JavaScript.
+`GET /api/client/session` authenticates that cookie and returns only `expires_at`
+to restore the portal after page refresh. Used, revoked, expired and unknown invitations all
+return the same 401. Send bearer tokens only in `Authorization: Bearer` headers.
+For cookie requests, every portal API call supplies `X-TTCP-Client: portal`. The API
+rejects missing markers, cross-site/same-site fetch metadata, and mismatched Origin
+hosts (including port). No cross-origin credentialed CORS is enabled. NGINX preserves
+the original Host authority for this check; Origin checking ignores forwarded
+headers. Explicit Authorization always takes precedence without cookie fallback.
+Client
 tokens cannot authenticate to admin routes, and admin tokens cannot authenticate to
-client routes. `POST /api/client/logout` revokes the current client session. Disabling
+client routes. Cookie scope does not include admin endpoints, which never accept
+client cookies. `POST /api/client/logout` revokes the current client session and
+expires the client cookie. An invalid/expired/revoked session also clears the stale
+cookie when an authenticated client route returns 401. Disabling
 or expiring a VPN user revokes client sessions; every request also checks current
 user status and expiry. Authentication and invitation responses carry
 `Cache-Control: no-store`.
 
-Client routes are scoped to the bearer session's user ID:
+Client routes are scoped to the authenticated client session's user ID:
 
 | Method and path | Result |
 | --- | --- |
+| `GET /api/client/session` | Current session expiry; cookie restoration |
 | `GET /api/client/me` | Own profile, device limit and enabled device count |
 | `GET /api/client/servers` | Enabled accessible server metadata |
 | `GET /api/client/devices` | Own devices |

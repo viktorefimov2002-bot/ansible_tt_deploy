@@ -2,7 +2,9 @@
 
 import hashlib
 import re
+from datetime import UTC, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -14,6 +16,36 @@ from apps.vpn.schemas import DeviceInput
 
 admin_invites = APIRouter(prefix="/api/vpn-users/{user_id}/invitations")
 router = APIRouter(prefix="/api/client")
+CLIENT_COOKIE = "__Secure-ttcp_client"
+CLIENT_COOKIE_PATH = "/api/client"
+
+
+def require_portal_request(request: Request):
+    # Custom headers require a same-origin request or an allowed CORS preflight.
+    # This API intentionally grants no cross-origin credentials/CORS permission.
+    origin = request.headers.get("Origin")
+    try:
+        parsed = urlsplit(origin) if origin is not None else None
+    except ValueError:
+        raise HTTPException(403, "Same-origin portal request required") from None
+    if (
+        request.headers.get("X-TTCP-Client") != "portal"
+        or request.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none")
+        or (
+            parsed is not None
+            and (
+                parsed.scheme not in ("http", "https")
+                or parsed.netloc.lower() != request.headers.get("Host", "").lower()
+            )
+        )
+    ):
+        raise HTTPException(403, "Same-origin portal request required")
+
+
+def clear_client_cookie(response: Response):
+    response.delete_cookie(
+        CLIENT_COOKIE, path=CLIENT_COOKIE_PATH, secure=True, httponly=True, samesite="strict"
+    )
 
 
 class InvitationInput(BaseModel):
@@ -24,6 +56,7 @@ class InvitationInput(BaseModel):
 class ExchangeInput(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     token: SecretStr = Field(min_length=43, max_length=43)
+    session_mode: Literal["bearer", "cookie"] = "bearer"
 
 
 def service(request: Request) -> ClientAuthService:
@@ -34,9 +67,18 @@ ClientService = Annotated[ClientAuthService, Depends(service)]
 
 
 async def client_principal(request: Request, auth: ClientService) -> ClientPrincipal:
-    value = request.headers.get("Authorization", "")
-    match = re.fullmatch(r"(?i:Bearer) ([A-Za-z0-9_-]{43})", value)
-    principal = await auth.authenticate(match[1]) if match else None
+    # An explicit Authorization header always wins, even when invalid. Never fall
+    # back to an ambient client cookie after an admin/invalid bearer is supplied.
+    if "Authorization" in request.headers:
+        match = re.fullmatch(r"(?i:Bearer) ([A-Za-z0-9_-]{43})", request.headers["Authorization"])
+        token = match[1] if match else None
+    else:
+        token = request.cookies.get(CLIENT_COOKIE)
+        if token:
+            require_portal_request(request)
+            if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+                token = None
+    principal = await auth.authenticate(token) if token else None
     if principal is None:
         raise HTTPException(401, "Authentication required", headers={"WWW-Authenticate": "Bearer"})
     request.state.client_principal = principal
@@ -99,7 +141,9 @@ async def revoke_invitation(
 
 
 @router.post("/exchange")
-async def exchange(body: ExchangeInput, request: Request, auth: ClientService):
+async def exchange(body: ExchangeInput, request: Request, response: Response, auth: ClientService):
+    if body.session_mode == "cookie":
+        require_portal_request(request)
     # Redis is ephemeral coordination only; a failure closes this public endpoint.
     # Use the socket peer, never an untrusted forwarded header. The edge proxy may
     # enforce a finer per-client policy when configured with trusted real IPs.
@@ -123,13 +167,32 @@ async def exchange(body: ExchangeInput, request: Request, auth: ClientService):
     if result is None:
         raise HTTPException(401, "Invalid invitation")
     session_token, expires_at = result
+    if body.session_mode == "cookie":
+        response.set_cookie(
+            CLIENT_COOKIE,
+            session_token,
+            path=CLIENT_COOKIE_PATH,
+            secure=True,
+            httponly=True,
+            samesite="strict",
+            expires=expires_at,
+            max_age=max(0, int((expires_at - datetime.now(UTC)).total_seconds())),
+        )
+        return {"token_type": "cookie", "expires_at": expires_at}
     return {"access_token": session_token, "token_type": "bearer", "expires_at": expires_at}
 
 
 @router.post("/logout", status_code=204)
 async def logout(request: Request, principal: Client, auth: ClientService):
     await auth.revoke_session(principal, request.state.request_id)
-    return Response(status_code=204)
+    response = Response(status_code=204)
+    clear_client_cookie(response)
+    return response
+
+
+@router.get("/session")
+async def session(principal: Client):
+    return {"expires_at": principal.expires_at}
 
 
 @router.get("/me")

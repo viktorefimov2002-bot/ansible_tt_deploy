@@ -9,9 +9,8 @@ let devices: { id: string; name: string; enabled: boolean }[];
 let state: ProvisionState | undefined;
 let deny: boolean;
 let requests: string[];
-const token = "S".repeat(43);
-function App() {
-  return <PortalView portal={usePortal("I".repeat(43))} />;
+function App({ invitation = "I".repeat(43) }: { invitation?: string | null }) {
+  return <PortalView portal={usePortal(invitation)} />;
 }
 beforeEach(() => {
   devices = [];
@@ -26,14 +25,27 @@ beforeEach(() => {
       const response = (data: unknown, status = 200) =>
         new Response(JSON.stringify(data), { status });
       expect(options.cache).toBe("no-store");
+      expect(options.credentials).toBe("same-origin");
+      expect((options.headers as Record<string, string>)["X-TTCP-Client"]).toBe(
+        "portal",
+      );
+      expect(
+        (options.headers as Record<string, string>).Authorization,
+      ).toBeUndefined();
       if (path === "/exchange")
         return response({
-          access_token: token,
+          token_type: "cookie",
           expires_at: new Date(Date.now() + 60000).toISOString(),
         });
-      expect((options.headers as Record<string, string>).Authorization).toBe(
-        "Bearer " + token,
-      );
+      if (path === "/session")
+        return response(
+          { expires_at: new Date(Date.now() + 60000).toISOString() },
+          deny ? 401 : 200,
+        );
+      if (path === "/logout") {
+        deny = true;
+        return new Response(null, { status: 204 });
+      }
       if (deny) return response({}, 401);
       if (path === "/me")
         return response({
@@ -201,4 +213,30 @@ test("configuration response cannot reappear after switching devices", async () 
     ).toBeNull(),
   );
   expect(requests.some((x) => x.endsWith("/provisioning"))).toBe(true);
+});
+
+test("page refresh restores cookie session without exchanging another invitation", async () => {
+  devices = [{ id: "d", name: "Телефон", enabled: true }];
+  state = "ready";
+  const first = render(<App />);
+  await screen.findByText("Анна");
+  first.unmount();
+  render(<App invitation={null} />);
+  await screen.findByText("Анна");
+  expect(requests.filter((path) => path === "/exchange")).toHaveLength(1);
+  expect(requests.filter((path) => path === "/session")).toHaveLength(1);
+  expect(localStorage.length + sessionStorage.length).toBe(0);
+  await screen.findByText("Готово к подключению");
+});
+test("logout prevents session restoration after refresh", async () => {
+  const user = userEvent.setup();
+  const first = render(<App />);
+  await screen.findByText("Анна");
+  await user.click(screen.getByRole("button", { name: "Выйти" }));
+  await waitFor(() => expect(requests).toContain("/logout"));
+  first.unmount();
+  render(<App invitation={null} />);
+  await waitFor(() => expect(requests).toContain("/session"));
+  expect(screen.queryByText("Анна")).toBeNull();
+  expect(screen.getByText("Вход по приглашению")).toBeInTheDocument();
 });

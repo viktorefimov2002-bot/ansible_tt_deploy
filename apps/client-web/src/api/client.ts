@@ -21,11 +21,9 @@ export class ApiError extends Error {
   }
 }
 export class ClientApi {
-  private token: string | null = null;
   private generation = 0;
   onUnauthorized: () => void = () => {};
   clear() {
-    this.token = null;
     this.generation++;
   }
   async request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -34,11 +32,11 @@ export class ClientApi {
       method,
       cache: "no-store",
       signal: AbortSignal.timeout(60000),
-      credentials: "omit",
+      credentials: "same-origin",
       referrerPolicy: "no-referrer",
       headers: {
         "Content-Type": "application/json",
-        ...(this.token ? { Authorization: "Bearer " + this.token } : {}),
+        "X-TTCP-Client": "portal",
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -53,11 +51,18 @@ export class ClientApi {
     return response.status === 204 ? (undefined as T) : response.json();
   }
   async exchange(token: string) {
-    const session = await this.request<{
-      access_token: string;
-      expires_at: string;
-    }>("/exchange", "POST", { token });
-    this.token = session.access_token;
+    const session = await this.request<{ expires_at: string }>(
+      "/exchange",
+      "POST",
+      {
+        token,
+        session_mode: "cookie",
+      },
+    );
+    return session.expires_at;
+  }
+  async session() {
+    const session = await this.request<{ expires_at: string }>("/session");
     return session.expires_at;
   }
   profile = () => this.request<Profile>("/me");

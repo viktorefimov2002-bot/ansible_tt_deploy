@@ -2,7 +2,7 @@
 
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -16,6 +16,7 @@ from apps.persistence.models import AuditEvent, ClientSession, Invitation, VpnUs
 class ClientPrincipal:
     user_id: UUID
     session_id: UUID
+    expires_at: datetime
 
 
 def audit(db, actor_type, actor_id, action, target_type, target_id, request_id, result="success"):
@@ -183,7 +184,7 @@ class ClientAuthService:
         async with transaction(self.engine) as db:
             row = (
                 await db.execute(
-                    select(ClientSession.id, ClientSession.user_id)
+                    select(ClientSession.id, ClientSession.user_id, ClientSession.expires_at)
                     .join(VpnUser, VpnUser.id == ClientSession.user_id)
                     .where(
                         ClientSession.token_hash == token_digest(token),
@@ -197,7 +198,7 @@ class ClientAuthService:
                     )
                 )
             ).first()
-            return ClientPrincipal(row.user_id, row.id) if row else None
+            return ClientPrincipal(row.user_id, row.id, row.expires_at) if row else None
 
     async def revoke_session(self, principal, request_id):
         async with transaction(self.engine) as db:

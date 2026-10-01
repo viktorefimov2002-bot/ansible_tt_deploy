@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from apps.api.auth import router
 from apps.api.auth_service import AuthService
-from apps.api.client import admin_invites
+from apps.api.client import admin_invites, clear_client_cookie
 from apps.api.client import router as client_router
 from apps.api.client_auth_service import ClientAuthService
 from apps.api.jobs import router as jobs_router
@@ -82,6 +82,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def request_context(request, call_next):
         request.state.request_id = str(uuid4())
         response = await call_next(request)
+        if (
+            request.url.path.startswith("/api/client/")
+            and request.url.path != "/api/client/exchange"
+            and response.status_code == 401
+        ):
+            clear_client_cookie(response)
         response.headers["X-Request-ID"] = request.state.request_id
         if request.url.path.startswith(
             ("/api/auth", "/api/jobs", "/api/servers", "/api/vpn-users", "/api/client")

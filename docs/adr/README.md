@@ -23,6 +23,7 @@ ADR фиксирует контекст, выбранное решение и е
 | [0014 — Server SSH trust](0014-server-ssh-trust.md) | Accepted under TTCP-009 delegated decision authority |
 | [0015 — Managed-node bootstrap](0015-managed-node-bootstrap.md) | Proposed; implemented in TTCP-010, owner acceptance pending |
 | [0016 — Observability transport](0016-observability-transport.md) | Proposed; implemented in TTCP-011, live-node acceptance pending |
+| [0017 — Client Portal cookie sessions](0017-client-cookie-session.md) | Proposed; implemented in TTCP-014 follow-up |
 
 Решения, уже установленные спецификацией, сохраняют силу независимо от отсутствия отдельных ADR; их последующее оформление не должно выдумывать историю согласования.
 

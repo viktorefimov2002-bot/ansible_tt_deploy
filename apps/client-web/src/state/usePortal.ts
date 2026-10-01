@@ -67,22 +67,33 @@ export function usePortal(invitation: string | null) {
       setBusy(false);
     }
   }, []);
-  useEffect(() => {
-    if (started.current || !invitation) return;
-    started.current = true;
-    void action(async () => {
-      const expires = await api.exchange(invitation);
+  const expiryTimer = useRef<number>(undefined);
+  const resume = useCallback(
+    async (invite: string | null) => {
+      let expires: string;
+      try {
+        expires = invite ? await api.exchange(invite) : await api.session();
+      } catch (e) {
+        if (!invite && e instanceof ApiError && e.status === 401) return;
+        throw e;
+      }
       setAuthenticated(true);
-      await refresh();
+      window.clearTimeout(expiryTimer.current);
       const delay = Math.max(0, new Date(expires).getTime() - Date.now());
       expiryTimer.current = window.setTimeout(() => {
         api.clear();
         clear();
         setError("Сессия истекла. Откройте новое приглашение.");
       }, delay);
-    });
-  }, [invitation, action, api, clear, refresh]);
-  const expiryTimer = useRef<number>(undefined);
+      await refresh();
+    },
+    [api, clear, refresh],
+  );
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    void action(() => resume(invitation));
+  }, [invitation, action, resume]);
   useEffect(() => {
     const hide = () => {
       if (document.visibilityState === "hidden") setConfiguration(undefined);
@@ -92,13 +103,18 @@ export function usePortal(invitation: string | null) {
       clear();
       window.clearTimeout(expiryTimer.current);
     };
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted) void action(() => resume(null));
+    };
+    window.addEventListener("pageshow", restore);
     document.addEventListener("visibilitychange", hide);
     window.addEventListener("pagehide", leave);
     return () => {
       document.removeEventListener("visibilitychange", hide);
       window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", restore);
     };
-  }, [api, clear]);
+  }, [api, clear, action, resume]);
   useEffect(
     () => () => {
       window.clearTimeout(expiryTimer.current);

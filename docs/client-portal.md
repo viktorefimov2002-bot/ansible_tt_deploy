@@ -53,7 +53,8 @@ It does not enable subscriptions or generate new random-prefix rules.
    are not sent to NGINX. Query `?invite=` is also accepted for compatibility;
    prefer fragments. Client static access logging is disabled.
 3. Open the link. The URL is cleaned before exchange. Verify profile, expiration
-   and the backend-provided device quota.
+   and the backend-provided device quota. Refresh the page: the same profile and
+   device list must return without another invitation/exchange.
 4. Add a named device (optionally choose its platform), select an accessible
    server, and click **Настроить подключение**.
 5. Observe queued/pending and running states. Worker success produces **Готово к
@@ -65,11 +66,18 @@ It does not enable subscriptions or generate new random-prefix rules.
    traffic against the managed test endpoint.
 7. Cancel device revocation once, then confirm it. Verify the configuration
    disappears and further delivery fails. Also test disabled/expired users,
-   disabled servers, removed server access and logout.
+   disabled servers, removed server access and logout. Refresh after logout: the
+   login/invitation screen must remain visible.
 
-The session is held in JavaScript memory only. Refreshing/closing the page requires
-another invitation. Clipboard copy needs a secure browser context (HTTPS, or local
-loopback during development). Production client hosting must use HTTPS. Previously
+The browser session lives in a Secure/HttpOnly/SameSite=Strict host-only cookie
+scoped to `/api/client`. Normal page refresh restores the existing valid session
+without reusing the invitation. No session token is returned to JavaScript or
+written to localStorage/sessionStorage. Logout or absolute expiry requires a new
+invitation. Configuration material remains memory-only and is fetched again after
+refresh. Clipboard copy needs a secure browser context (HTTPS, or local
+loopback during development). Production client hosting must use HTTPS. Local Secure-cookie testing over HTTP
+loopback is browser-dependent; use HTTPS for full cross-browser validation (Safari
+may reject Secure cookies on HTTP loopback). Previously
 exported files cannot be erased by the portal; remote credential revoke invalidates
 VPN access after its durable job is applied.
 
@@ -92,6 +100,28 @@ VPN access after its durable job is applied.
   exchange, application logs, third-party QR services or service-worker caches.
   Polling revalidates access and clears delivery on failures; selection and logout
   also clear delivery. In-flight results from old selections are discarded.
+
+## Invitation exchange edge limit
+
+The direct NGINX edge uses `$binary_remote_addr` (TCP socket peer), 5 requests/minute
+and a burst of 5 on the exact `/api/client/exchange` route. Excess requests return
+429 with `Cache-Control: no-store`. Incoming `Forwarded`, `X-Forwarded-For`,
+`X-Real-IP` and `X-Forwarded-Host` cannot alter the limiter's key. Forwarded client
+metadata is overwritten/removed before proxying the exchange to the API.
+There is no blanket `set_real_ip_from` or header-based real-IP trust.
+If placing a CDN/load balancer before this edge later, configure explicit trusted
+proxy CIDRs and prevent direct bypass before enabling a real-IP header; the current
+configuration intentionally treats that proxy as the TCP peer.
+
+Run the real NGINX regression with:
+
+```sh
+TTCP_TEST_NGINX=/path/to/nginx python -m pytest -q tests/test_client_edge.py
+```
+
+The test uses the checked-in edge configuration with temporary local listen/upstream
+ports, changing forwarded headers, and two actual socket source addresses. It checks
+429/no-store, per-client isolation and independence from admin/session routes.
 
 ## Frontend boundaries for the future Figma design
 
