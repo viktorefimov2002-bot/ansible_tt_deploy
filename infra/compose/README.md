@@ -199,3 +199,9 @@ Kafka, Vault и Kubernetes не добавляются.
 [NGINX image](https://hub.docker.com/_/nginx),
 [VictoriaMetrics](https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/),
 [Grafana Docker](https://grafana.com/docs/grafana/latest/setup-grafana/configure-docker/).
+
+## Client Portal (TTCP-014)
+
+NGINX builds the static client bundle with `infra/nginx/Dockerfile`. After migrations
+and `docker compose up -d --build api worker nginx`, open
+`http://127.0.0.1:8080/client/`. See [client journey and node prerequisites](../../docs/client-portal.md).

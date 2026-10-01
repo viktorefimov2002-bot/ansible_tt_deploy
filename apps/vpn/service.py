@@ -1,5 +1,6 @@
 """Durable VPN identity intent; PostgreSQL rows serialize quota and revocation."""
 
+import json
 import secrets
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -96,6 +97,9 @@ class VpnService:
         return user
 
     async def _view(self, db, user):
+        # PostgreSQL on-update timestamps must be fetched explicitly in async ORM.
+        await db.flush()
+        await db.refresh(user, attribute_names=["updated_at"])
         selected = (
             await db.scalars(select(ServerAccess.server_id).where(ServerAccess.user_id == user.id))
         ).all()
@@ -416,7 +420,11 @@ class VpnService:
                 credential.secret_ciphertext = self.cipher.encrypt(
                     secrets.token_urlsafe(48).encode()
                 )
-            elif credential.status == "active":
+            elif credential.status == "active" and await db.scalar(
+                select(DeviceCredential.config_ciphertext.is_not(None)).where(
+                    DeviceCredential.id == credential.id
+                )
+            ):
                 completed = await db.scalar(
                     select(Job)
                     .where(
@@ -445,6 +453,7 @@ class VpnService:
     async def _revoke_credential(self, db, credential, actor, request_id, *, client_actor=None):
         if credential.status == "revoked":
             return None
+        credential.config_ciphertext = None
         credential.status = "revoking"
         credential.revoked_at = await db.scalar(select(func.clock_timestamp()))
         credential.downloaded_at = credential.revoked_at  # Invalidate handoff immediately.
@@ -534,6 +543,103 @@ class VpnService:
                 "password": password,
                 "server": server.domain or str(server.public_ip or server.hostname),
             }
+
+    async def client_states(self, user_id, device_id):
+        async with transaction(self.engine) as db:
+            # Status reads must not wait on the worker's remote-execution user lock.
+            user = await db.get(VpnUser, user_id)
+            if user is None:
+                raise VpnError(404, "VPN user not found")
+            self._require_active(user)
+            device = await self._device(db, user_id, device_id)
+            if not device.enabled:
+                raise VpnError(409, "Device revoked")
+            rows = (
+                await db.execute(
+                    select(DeviceCredential, DeviceCredential.config_ciphertext.is_not(None)).where(
+                        DeviceCredential.device_id == device_id
+                    )
+                )
+            ).all()
+            states = []
+            for credential, has_config in rows:
+                try:
+                    await self._accessible(db, user, credential.server_id)
+                except VpnError:
+                    continue
+                job = await db.scalar(
+                    select(Job)
+                    .where(Job.target_id == credential.id, Job.type == "credential.create")
+                    .order_by(Job.created_at.desc(), Job.id.desc())
+                    .limit(1)
+                )
+                state = (
+                    "revoked"
+                    if credential.status in ("revoking", "revoked")
+                    else "ready"
+                    if credential.status == "active" and has_config
+                    else "running"
+                    if job and job.status == "running"
+                    else "failed"
+                    if job and job.status in ("failed", "cancelled", "succeeded")
+                    else "pending"
+                )
+                states.append({"server_id": credential.server_id, "state": state})
+            return states
+
+    async def client_configuration(self, principal, device_id, server_id, request_id):
+        if self.cipher is None:
+            raise VpnError(503, "Configuration unavailable")
+        async with transaction(self.engine) as db:
+            user = await self._user(db, principal.user_id)
+            self._require_active(user)
+            session = await db.get(ClientSession, principal.session_id, with_for_update=True)
+            now = await db.scalar(select(func.clock_timestamp()))
+            if (
+                session is None
+                or session.user_id != user.id
+                or session.revoked_at
+                or session.expires_at <= now
+            ):
+                raise VpnError(401, "Authentication required")
+            device = await self._device(db, user.id, device_id)
+            if not device.enabled:
+                raise VpnError(409, "Device revoked")
+            await self._accessible(db, user, server_id)
+            credential = await db.scalar(
+                select(DeviceCredential)
+                .where(
+                    DeviceCredential.device_id == device_id, DeviceCredential.server_id == server_id
+                )
+                .options(undefer(DeviceCredential.config_ciphertext))
+                .with_for_update()
+            )
+            if (
+                credential is None
+                or credential.status != "active"
+                or not credential.config_ciphertext
+            ):
+                raise VpnError(409, "Configuration not ready")
+            try:
+                config = json.loads(self.cipher.decrypt(credential.config_ciphertext))
+                if (
+                    set(config) != {"toml", "deep_link"}
+                    or not all(isinstance(v, str) and v for v in config.values())
+                    or not config["deep_link"].startswith("tt://")
+                ):
+                    raise ValueError
+            except (InvalidToken, ValueError, UnicodeError, TypeError):
+                raise VpnError(503, "Configuration unavailable") from None
+            self.audit(
+                db,
+                user.id,
+                "client.configuration.deliver",
+                "credential",
+                credential.id,
+                request_id,
+                actor_type="vpn_user",
+            )
+            return config
 
     async def expire_due(self):
         # Called repeatedly by the worker; row locks prevent duplicate transitions.

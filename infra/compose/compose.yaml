@@ -140,7 +140,9 @@ services:
 
   nginx:
     <<: *runtime
-    image: nginx:1.30.5-alpine3.24
+    build:
+      context: ../..
+      dockerfile: infra/nginx/Dockerfile
     ports:
       - "127.0.0.1:${HTTP_PORT:-8080}:8080"
     volumes:

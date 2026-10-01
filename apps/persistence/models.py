@@ -186,6 +186,7 @@ class DeviceCredential(Identity, Base):
     username: Mapped[str] = mapped_column(String(128))
     # Nullable for metadata-only records; an issuing service must encrypt first.
     secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    config_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     status: Mapped[str] = mapped_column(String(16), server_default="pending")
     applied_at: Mapped[datetime | None]
     downloaded_at: Mapped[datetime | None]

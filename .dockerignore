@@ -18,3 +18,5 @@ apps/**/__pycache__/
 **/*.py[cod]
 **/.env
 **/.env.*
+apps/client-web/node_modules/
+apps/client-web/dist/

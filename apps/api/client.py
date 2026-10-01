@@ -2,7 +2,7 @@
 
 import hashlib
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -182,3 +182,28 @@ async def create_credential(device_id: UUID, server_id: UUID, request: Request, 
     )
     # Job metadata is intentionally minimal; admin job history is not client-readable.
     return {"id": job.id, "status": job.status}
+
+
+@router.get("/devices/{device_id}/provisioning")
+async def provisioning(device_id: UUID, request: Request, principal: Client):
+    return await request.app.state.vpn.client_states(principal.user_id, device_id)
+
+
+@router.post("/devices/{device_id}/configurations/{server_id}")
+async def configuration(
+    device_id: UUID,
+    server_id: UUID,
+    request: Request,
+    principal: Client,
+    format: Literal["json", "toml"] = "json",
+):
+    result = await request.app.state.vpn.client_configuration(
+        principal, device_id, server_id, request.state.request_id
+    )
+    if format == "toml":
+        return Response(
+            result["toml"],
+            media_type="application/toml",
+            headers={"Content-Disposition": 'attachment; filename="trusttunnel.toml"'},
+        )
+    return result

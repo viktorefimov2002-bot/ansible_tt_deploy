@@ -46,6 +46,7 @@ class AnsibleExecutionAdapter:
                     if request.credential is None
                     else {
                         "username": request.credential.username,
+                        "public_address": request.credential.public_address,
                         "password": request.credential.password,
                     },
                 }
@@ -124,7 +125,22 @@ class AnsibleExecutionAdapter:
                 outcome = {0: Outcome.SUCCEEDED, 4: Outcome.UNREACHABLE}.get(code, Outcome.FAILED)
                 if checks is not None and outcome == Outcome.UNREACHABLE:
                     checks["ssh"] = "fail"
-                return ExecutionResult(outcome, code, checks)
+                configuration = None
+                delivery = cwd / "delivery.json"
+                if outcome == Outcome.SUCCEEDED and delivery.exists():
+                    if delivery.stat().st_size > 65536:
+                        return ExecutionResult(Outcome.INVALID)
+                    try:
+                        configuration = json.loads(delivery.read_text(encoding="utf-8"))
+                        if (
+                            set(configuration) != {"toml", "deep_link"}
+                            or not all(isinstance(v, str) and v for v in configuration.values())
+                            or not configuration["deep_link"].startswith("tt://")
+                        ):
+                            raise ValueError
+                    except (ValueError, TypeError, UnicodeError):
+                        return ExecutionResult(Outcome.INVALID)
+                return ExecutionResult(outcome, code, checks, configuration)
         except TimeoutError:
             return ExecutionResult(Outcome.TIMED_OUT, checks=checks)
         except OSError:
@@ -177,6 +193,11 @@ class AnsibleExecutionAdapter:
                     "ttcp_credential_payload": (
                         {
                             "operation": request.operation,
+                            **(
+                                {"public_address": request.credential.public_address}
+                                if request.credential.public_address
+                                else {}
+                            ),
                             "username": request.credential.username,
                             "password": request.credential.password.get_secret_value()
                             if request.credential.password

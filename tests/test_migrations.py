@@ -40,8 +40,9 @@ def config():
 
 def test_ordered_reproducible_offline_migrations():
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0007_client_auth"]
+    assert scripts.get_heads() == ["0008_client_config"]
     assert [r.revision for r in scripts.walk_revisions()] == [
+        "0008_client_config",
         "0007_client_auth",
         "0006_vpn_lifecycle",
         "0005_servers",

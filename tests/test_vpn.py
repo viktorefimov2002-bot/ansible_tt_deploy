@@ -107,7 +107,13 @@ async def test_vpn_api_quota_access_rbac_jobs_and_secret_handoff(auth, key):  # 
             calls.append(request)
             if len(calls) == 1:
                 return ExecutionResult(Outcome.UNREACHABLE)
-            return ExecutionResult(Outcome.SUCCEEDED)
+            return ExecutionResult(
+                Outcome.SUCCEEDED,
+                configuration={
+                    "toml": "# test-only generated configuration",
+                    "deep_link": "tt://test-only",
+                },
+            )
 
     worker = Worker(jobs, credential_handlers(Port(), vpn))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client:
@@ -240,7 +246,13 @@ async def test_device_revoke_disable_expiration_and_revoke_retry(auth, key):  # 
             if request.operation == "credential.revoke" and failures["revoke"]:
                 failures["revoke"] -= 1
                 return ExecutionResult(Outcome.UNREACHABLE)
-            return ExecutionResult(Outcome.SUCCEEDED)
+            return ExecutionResult(
+                Outcome.SUCCEEDED,
+                configuration={
+                    "toml": "# test-only generated configuration",
+                    "deep_link": "tt://test-only",
+                },
+            )
 
     worker = Worker(jobs, credential_handlers(Port(), vpn))
     await worker.execute(first_job.id)

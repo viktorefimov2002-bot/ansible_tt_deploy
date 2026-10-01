@@ -1,7 +1,7 @@
 """Transport-independent, closed execution contract. Never persist these requests."""
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -54,6 +54,7 @@ class PreflightParameters(ClosedModel):
 
 
 class CredentialParameters(ClosedModel):
+    public_address: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9.:-]{0,252}$")
     username: str = Field(pattern=r"^ttcp_[a-f0-9]{32}$", max_length=37)
     password: SecretStr | None = Field(default=None, repr=False, exclude=True)
 
@@ -135,6 +136,7 @@ class ExecutionResult:
     outcome: Outcome
     exit_code: int | None = None
     checks: dict[str, str] | None = None
+    configuration: dict[str, str] | None = field(default=None, repr=False)
 
 
 EventSink = Callable[[ExecutionEvent], Awaitable[None]]

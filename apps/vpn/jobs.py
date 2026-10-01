@@ -1,5 +1,7 @@
 """Worker reconciles durable credential intent through a typed execution port."""
 
+import json
+
 from cryptography.fernet import InvalidToken
 from sqlalchemy import func, select
 from sqlalchemy.orm import undefer
@@ -34,13 +36,20 @@ def credential_handlers(port, vpn):
             credential = await db.scalar(
                 select(DeviceCredential)
                 .where(DeviceCredential.id == job.target_id)
-                .options(undefer(DeviceCredential.secret_ciphertext))
+                .options(
+                    undefer(DeviceCredential.secret_ciphertext),
+                    undefer(DeviceCredential.config_ciphertext),
+                )
                 .with_for_update()
             )
             if job.type == "credential.create":
-                if credential.status == "active":
+                if credential.status == "active" and credential.config_ciphertext:
                     return
-                if credential.status != "pending" or not user.enabled or not device.enabled:
+                if (
+                    credential.status not in ("pending", "active")
+                    or not user.enabled
+                    or not device.enabled
+                ):
                     return  # Revocation intent superseded this queued create.
                 if user.expires_at and user.expires_at <= await db.scalar(
                     select(func.clock_timestamp())
@@ -82,7 +91,11 @@ def credential_handlers(port, vpn):
                         private_key=private,
                     ),
                     credential=CredentialParameters(
-                        username=credential.username, password=password
+                        username=credential.username,
+                        password=password,
+                        public_address=(server.domain or str(server.public_ip or server.hostname))
+                        if job.type == "credential.create"
+                        else None,
                     ),
                 )
             except (InvalidToken, ValueError, UnicodeError, TypeError):
@@ -96,11 +109,18 @@ def credential_handlers(port, vpn):
             if result.outcome != Outcome.SUCCEEDED:
                 # Node helper is idempotent; all transient failures are retryable.
                 raise RetryableError
+            if job.type == "credential.create":
+                if result.configuration is None:
+                    raise RetryableError
+                credential.config_ciphertext = vpn.cipher.encrypt(
+                    json.dumps(result.configuration).encode()
+                )
             now = await db.scalar(select(func.clock_timestamp()))
             credential.status = "active" if job.type == "credential.create" else "revoked"
             credential.applied_at = now
             if job.type == "credential.revoke":
                 credential.secret_ciphertext = None
+                credential.config_ciphertext = None
             db.add(
                 AuditEvent(
                     actor_type="system",

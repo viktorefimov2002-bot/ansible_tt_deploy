@@ -27,3 +27,7 @@ __pycache__/
 automation/ansible/roles/trusttunnel_endpoint/files/credentials.toml
 automation/ansible/roles/trusttunnel_endpoint/files/new_clients.toml
 automation/ansible/roles/trusttunnel_endpoint/files/remove_clients.txt
+
+node_modules/
+apps/client-web/dist/
+.pnpm-store/

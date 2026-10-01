@@ -11,6 +11,9 @@
 Отдельный [managed-node bootstrap](docs/node-bootstrap.md) подготавливает VPS
 для управления без сохранения provider/root credentials (TTCP-010).
 
+[Client Portal](docs/client-portal.md) предоставляет клиентский путь от приглашения
+до конфигурации TrustTunnel (TTCP-014).
+
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),
 [план MVP](docs/planning/mvp.md).

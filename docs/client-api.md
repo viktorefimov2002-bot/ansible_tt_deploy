@@ -36,5 +36,5 @@ Client routes are scoped to the bearer session's user ID:
 | `POST /api/client/devices/{device_id}/credentials/{server_id}` | Request TTCP-012 durable credential job; returns only job ID and status |
 
 Clients cannot use admin job, credential secret handoff, VPN user mutation or server
-management endpoints. Configuration rendering, QR and `tt://` delivery belong to
-the next Client Portal task.
+management endpoints. Configuration rendering, QR and `tt://` delivery are implemented by
+[TTCP-014 Client Portal](client-portal.md).

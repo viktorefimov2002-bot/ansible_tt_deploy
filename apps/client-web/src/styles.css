@@ -1,0 +1,138 @@
+@import "tailwindcss";
+:root {
+  --background: #f4f7fb;
+  --foreground: #172b46;
+  --card: #fff;
+  --primary: #175fc4;
+  --primary-foreground: #fff;
+  --border: #b9c8db;
+  --destructive: #b52735;
+  --radius: 1rem;
+  --spacing: 1rem;
+  font-family: system-ui, sans-serif;
+  color: var(--foreground);
+  background: var(--background);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 760px;
+  margin: auto;
+  padding: clamp(16px, 4vw, 40px);
+}
+h1 {
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  font-weight: 700;
+}
+h2 {
+  font-size: 1.2rem;
+  font-weight: 650;
+  margin-bottom: var(--spacing);
+}
+p {
+  line-height: 1.6;
+  margin: 0.7rem 0;
+}
+.brand {
+  color: var(--primary);
+  font-weight: 700;
+}
+section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: clamp(16px, 4vw, 28px);
+  margin: 20px 0;
+}
+label {
+  display: block;
+  margin-bottom: var(--spacing);
+  font-weight: 500;
+}
+input,
+select {
+  display: block;
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  margin-top: 0.5rem;
+  font: inherit;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 44px;
+  border-radius: 0.5rem;
+  padding: 0.7rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  margin: 0.3rem 0;
+}
+.button-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.button-outline {
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.button-danger {
+  background: var(--destructive);
+  color: white;
+}
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.error {
+  border: 1px solid var(--destructive);
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+summary {
+  cursor: pointer;
+  padding: 1rem 0;
+}
+.qr {
+  width: min(100%, 320px);
+  height: auto;
+}
+footer {
+  text-align: center;
+  padding: 1rem;
+}
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: #0008;
+}
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 440px);
+  background: var(--card);
+  padding: 24px;
+  border-radius: var(--radius);
+}

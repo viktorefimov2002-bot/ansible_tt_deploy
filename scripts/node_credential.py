@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 """Root-only, no-argument credential helper installed by managed-node bootstrap.
 
-Accepts a bounded JSON request on stdin. It never prints request or file content.
+Accepts a bounded JSON request on stdin. Generated configurations are returned
+only to the no_log execution channel.
 """
 
 import fcntl
@@ -83,17 +84,60 @@ def service(*args):
         raise Rejected
 
 
+def generate_configuration(username, address):
+    # Same official endpoint CLI used by roles/trusttunnel_endpoint/tasks/client_configs.yml.
+    result = {}
+    for fmt, key in (("toml", "toml"), ("deeplink", "deep_link")):
+        generated = subprocess.run(
+            [
+                str(DIRECTORY / "trusttunnel_endpoint"),
+                "vpn.toml",
+                "hosts.toml",
+                "-c",
+                username,
+                "-a",
+                address,
+                "--format",
+                fmt,
+                "--name",
+                "TrustTunnel",
+            ],
+            cwd=DIRECTORY,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+            check=False,
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+        )
+        if generated.returncode or not 0 < len(generated.stdout) <= 24000:
+            raise Rejected
+        result[key] = generated.stdout.decode("utf-8").strip()
+    if not result["deep_link"].startswith("tt://"):
+        raise Rejected
+    return result
+
+
 def main():
     if len(sys.argv) != 1 or os.geteuid() != 0:
         raise Rejected
     request = json.loads(sys.stdin.read(1025))
-    if not isinstance(request, dict) or set(request) != {"operation", "username", "password"}:
+    if not isinstance(request, dict) or set(request) not in (
+        {"operation", "username", "password"},
+        {"operation", "username", "password", "public_address"},
+    ):
         raise Rejected
     operation, username, password = (request[x] for x in ("operation", "username", "password"))
     if (
         operation not in {"credential.create", "credential.revoke"}
         or not isinstance(username, str)
         or not USERNAME.fullmatch(username)
+    ):
+        raise Rejected
+    address = request.get("public_address")
+    if address is not None and (
+        operation != "credential.create"
+        or not isinstance(address, str)
+        or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.:-]{0,252}", address)
     ):
         raise Rejected
     if operation == "credential.create":
@@ -146,6 +190,8 @@ def main():
             except (Rejected, OSError, subprocess.TimeoutExpired):
                 pass
             raise Rejected from None
+        if operation == "credential.create" and address:
+            print(json.dumps(generate_configuration(username, address)))
         if operation == "credential.revoke":
             config = DIRECTORY / ("client_" + username + ".toml")
             if config.is_file() and not config.is_symlink():
