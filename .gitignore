@@ -30,4 +30,5 @@ automation/ansible/roles/trusttunnel_endpoint/files/remove_clients.txt
 
 node_modules/
 apps/client-web/dist/
+apps/admin-web/dist/
 .pnpm-store/

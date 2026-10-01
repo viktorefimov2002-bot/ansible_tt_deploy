@@ -50,7 +50,7 @@ async def test_job_rbac_status_cancellation_sse(auth):  # noqa: F811
         assert (await client.get("/api/jobs/not-uuid", headers=viewer)).status_code == 422
         assert (
             await client.post("/api/jobs", headers=admin, json={"type": "shell"})
-        ).status_code == 404
+        ).status_code == 405  # Listing exists; arbitrary job creation remains unavailable.
         unsafe = await create(jobs, cancellable=False)
         await jobs.claim(unsafe.id)
         assert (

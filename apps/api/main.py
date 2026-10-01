@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from apps.api.auth import router
+from apps.api.auth import clear_admin_cookie, router
 from apps.api.auth_service import AuthService
 from apps.api.client import admin_invites, clear_client_cookie
 from apps.api.client import router as client_router
@@ -82,6 +82,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def request_context(request, call_next):
         request.state.request_id = str(uuid4())
         response = await call_next(request)
+        if (
+            request.url.path.startswith(
+                ("/api/auth/", "/api/jobs", "/api/servers", "/api/vpn-users")
+            )
+            and request.url.path != "/api/auth/login"
+            and response.status_code == 401
+        ):
+            clear_admin_cookie(response)
         if (
             request.url.path.startswith("/api/client/")
             and request.url.path != "/api/client/exchange"

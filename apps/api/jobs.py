@@ -2,7 +2,7 @@ import asyncio
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from apps.api.auth import Administrator, Authenticated
@@ -44,6 +44,16 @@ def representation(job):
     }
 
 
+@router.get("")
+async def list_jobs(
+    request: Request,
+    principal: Authenticated,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    return [representation(job) for job in await service(request).list(offset, limit)]
+
+
 @router.get("/{job_id}")
 async def inspect_job(job_id: UUID, request: Request, principal: Authenticated):
     job = await service(request).get(job_id)
@@ -80,7 +90,7 @@ async def stream_logs(job_id: UUID, request: Request, principal: Authenticated):
     cursor = int(raw_cursor)
     if cursor > initial.log_sequence:
         raise HTTPException(422, "Log cursor is ahead of job history")
-    token = request.headers["Authorization"].split(" ", 1)[1]
+    token = request.state.auth_token
 
     async def stream():
         after = cursor

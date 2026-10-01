@@ -5,6 +5,10 @@
 Это среда разработки на Linux containers, не готовое production-развёртывание.
 Нужны Docker Engine / Docker Desktop и Docker Compose v2.20+ (`up --wait`).
 Существующий [Ansible/CLI](../../automation/ansible/README.md) работает независимо.
+TTCP-015 adds [Admin Web and the separate-origin HTTPS overlay](../../docs/admin-web.md).
+Local web URLs are `http://admin.localhost:8080/` and `http://vpn.localhost:8080/`.
+The production overlay requires Compose 2.24.4+, distinct DNS names and mounted TLS
+certificates; it replaces the development entrypoint's ports and configuration.
 
 ## Запуск
 
@@ -204,4 +208,5 @@ Kafka, Vault и Kubernetes не добавляются.
 
 NGINX builds the static client bundle with `infra/nginx/Dockerfile`. After migrations
 and `docker compose up -d --build api worker nginx`, open
-`http://127.0.0.1:8080/client/`. See [client journey and node prerequisites](../../docs/client-portal.md).
+`http://vpn.localhost:8080/`. See [client journey and node prerequisites](../../docs/client-portal.md).
+The separate Admin Web bundle is served at `http://admin.localhost:8080/`.

@@ -1,0 +1,49 @@
+limit_req_zone $binary_remote_addr zone=auth_login:1m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=client_exchange:1m rate=5r/m;
+server {
+    listen 8080 default_server;
+    server_name _;
+    location = /healthz { access_log off; return 200 "Control Plane entrypoint\n"; }
+    location / { return 404; }
+}
+server {
+    listen 80;
+    server_name ${TTCP_CLIENT_HOST};
+    return 308 https://${TTCP_CLIENT_HOST}$request_uri;
+}
+server {
+    listen 80;
+    server_name ${TTCP_ADMIN_HOST};
+    return 308 https://${TTCP_ADMIN_HOST}$request_uri;
+}
+server {
+    listen 80 default_server;
+    server_name _;
+    return 404;
+}
+server {
+    listen 443 ssl default_server;
+    ssl_reject_handshake on;
+}
+server {
+    listen 443 ssl;
+    server_name ${TTCP_CLIENT_HOST};
+    ssl_certificate /etc/nginx/tls/client/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/client/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /usr/share/nginx/html/client;
+    include /etc/nginx/ttcp/security.conf;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    include /etc/nginx/ttcp/client-routes.conf;
+}
+server {
+    listen 443 ssl;
+    server_name ${TTCP_ADMIN_HOST};
+    ssl_certificate /etc/nginx/tls/admin/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/admin/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root /usr/share/nginx/html/admin;
+    include /etc/nginx/ttcp/security.conf;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    include /etc/nginx/ttcp/admin-routes.conf;
+}

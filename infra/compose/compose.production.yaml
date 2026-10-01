@@ -1,0 +1,14 @@
+# Compose 2.24.4+; overlay replaces development entrypoint mounts and ports.
+services:
+  nginx:
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes: !override
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${TTCP_TLS_DIR:?Set TTCP_TLS_DIR to the certificate directory}:/etc/nginx/tls:ro
+    environment:
+      TTCP_CLIENT_HOST: ${TTCP_CLIENT_HOST:?Set TTCP_CLIENT_HOST to vpn.<domain>}
+      TTCP_ADMIN_HOST: ${TTCP_ADMIN_HOST:?Set TTCP_ADMIN_HOST to admin.<domain>}
+      NGINX_ENVSUBST_FILTER: "^TTCP_(CLIENT|ADMIN)_HOST$$"

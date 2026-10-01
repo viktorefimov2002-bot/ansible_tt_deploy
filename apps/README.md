@@ -17,7 +17,9 @@ TTCP-006 добавляет административную аутентифи�
 
 Рекомендуемый способ — [Compose](../infra/compose/README.md): API и worker собираются
 одним Dockerfile, работают от UID 65534, без writable root filesystem и host ports.
-API доступен через NGINX на `http://127.0.0.1:8080/api/healthz` и `/api/readyz`.
+NGINX serves [Admin Web](../docs/admin-web.md) at `http://admin.localhost:8080/`
+and Client Portal at `http://vpn.localhost:8080/`, with disjoint API allowlists.
+`http://127.0.0.1:8080/healthz` probes the edge; API readiness remains internal.
 
 Для локальной разработки требуется Python 3.12+ и доступные PostgreSQL/Redis.
 Зависимости Ansible в корневом `requirements.txt` не меняются.

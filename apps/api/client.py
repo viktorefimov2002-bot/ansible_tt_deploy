@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from apps.api.auth import Administrator
+from apps.api.auth import Administrator, Authenticated
 from apps.api.client_auth_service import ClientAuthService, ClientPrincipal
 from apps.vpn.schemas import DeviceInput
 
@@ -108,7 +108,7 @@ async def create_invitation(
 
 
 @admin_invites.get("")
-async def list_invitations(user_id: UUID, principal: Administrator, auth: ClientService):
+async def list_invitations(user_id: UUID, principal: Authenticated, auth: ClientService):
     result = await auth.list_invitations(user_id)
     if result is None:
         raise HTTPException(404, "VPN user not found")
@@ -117,7 +117,7 @@ async def list_invitations(user_id: UUID, principal: Administrator, auth: Client
 
 @admin_invites.get("/{invitation_id}")
 async def get_invitation(
-    user_id: UUID, invitation_id: UUID, principal: Administrator, auth: ClientService
+    user_id: UUID, invitation_id: UUID, principal: Authenticated, auth: ClientService
 ):
     result = await auth.get_invitation(user_id, invitation_id)
     if result is None:

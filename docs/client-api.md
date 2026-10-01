@@ -15,7 +15,9 @@ Authorization headers at that edge.
 An admin bearer session can `POST /api/vpn-users/{user_id}/invitations` with optional
 `{"lifetime_seconds": 86400}` (300–604800). The response contains the token once;
 `GET` on the collection or `/{invitation_id}` returns metadata without it. `DELETE`
-on `/{invitation_id}` revokes an invitation. Viewer sessions cannot manage invitations.
+on `/{invitation_id}` revokes an invitation. TTCP-015 permits viewer GET metadata
+reads; viewer POST/DELETE remain forbidden. Admin Web cookies can also use these
+admin-origin routes with the required browser header.
 
 `POST /api/client/exchange` accepts `{"token": "..."}` and returns a client bearer
 `access_token` and `expires_at` for the existing bearer/CLI contract. The portal

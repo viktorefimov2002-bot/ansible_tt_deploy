@@ -167,6 +167,19 @@ class JobService:
         async with transaction(self.engine) as db:
             return await db.get(Job, job_id)
 
+    async def list(self, offset: int = 0, limit: int = 50) -> list[Job]:
+        async with transaction(self.engine) as db:
+            return list(
+                (
+                    await db.scalars(
+                        select(Job)
+                        .order_by(Job.created_at.desc(), Job.id.desc())
+                        .offset(offset)
+                        .limit(limit)
+                    )
+                ).all()
+            )
+
     async def dispatch(self):
         # Enqueue under a short row lock. Redis delivery is only a hint; the intent
         # predates it and a rollback/crash can only cause duplicate delivery.

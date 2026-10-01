@@ -5,22 +5,28 @@ Only listen ports and the API upstream address differ from the checked-in config
 """
 
 import os
+import re
 import shutil
 import socket
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def edge(tmp_path):
+def edge(tmp_path, request):
     executable = os.environ.get("TTCP_TEST_NGINX") or shutil.which("nginx")
     if not executable:
         pytest.skip("Set TTCP_TEST_NGINX or install nginx for the edge runtime regression")
@@ -35,6 +41,9 @@ def edge(tmp_path):
             self.end_headers()
 
         do_GET = do_POST
+        do_PUT = do_POST
+        do_PATCH = do_POST
+        do_DELETE = do_POST
 
         def log_message(self, *args):
             pass
@@ -45,9 +54,59 @@ def edge(tmp_path):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    config = (ROOT / "infra/nginx/default.conf").read_text()
+
+    def expand(name):
+        config = (ROOT / "infra/nginx" / name).read_text()
+        return re.sub(r"include /etc/nginx/ttcp/([^;]+);", lambda match: expand(match[1]), config)
+
+    production = getattr(request, "param", None) == "production"
+    config = expand("production.conf.template" if production else "default.conf")
+    if production:
+        config = config.replace("${TTCP_CLIENT_HOST}", "vpn.localhost")
+        config = config.replace("${TTCP_ADMIN_HOST}", "admin.localhost")
+        # Test certificate material is temporary and never enters the repository.
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+        now = datetime.now(UTC)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        (tmp_path / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        (tmp_path / "key.pem").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        for role in ("admin", "client"):
+            config = config.replace(
+                f"/etc/nginx/tls/{role}/fullchain.pem", (tmp_path / "cert.pem").as_posix()
+            ).replace(f"/etc/nginx/tls/{role}/privkey.pem", (tmp_path / "key.pem").as_posix())
+        with socket.socket() as http_socket, socket.socket() as health_socket:
+            http_socket.bind(("127.0.0.1", 0))
+            health_socket.bind(("127.0.0.1", 0))
+            config = config.replace(
+                "listen 8080",
+                f"listen 127.0.0.1:{health_socket.getsockname()[1]}",
+            )
+            config = config.replace("listen 80", f"listen 127.0.0.1:{http_socket.getsockname()[1]}")
+        config = config.replace("listen 443", f"listen 127.0.0.1:{port}")
+    config = config.replace("listen 8080", f"listen 127.0.0.1:{port}")
+    # IPv6 listener is declared only once on the default virtual host.
     config = config.replace(
-        "listen 8080;", f"listen 127.0.0.1:{port}; listen [::1]:{port} ipv6only=on;"
+        f"listen 127.0.0.1:{port} default_server;",
+        f"listen 127.0.0.1:{port} default_server; listen [::1]:{port} ipv6only=on;",
+    )
+    config = config.replace(
+        f"listen 127.0.0.1:{port};", f"listen 127.0.0.1:{port}; listen [::1]:{port};"
     )
     config = config.replace("api:8080", f"127.0.0.1:{upstream.server_port}")
     (tmp_path / "logs").mkdir()
@@ -57,7 +116,8 @@ def edge(tmp_path):
         "events { worker_connections 64; } http { access_log off; " + config + " }"
     )
     args = [executable, "-p", tmp_path.as_posix() + "/", "-c", "nginx.conf"]
-    subprocess.run([*args, "-t"], check=True, capture_output=True, timeout=10)
+    syntax = subprocess.run([*args, "-t"], capture_output=True, timeout=10)
+    assert syntax.returncode == 0, syntax.stderr.decode(errors="replace")
     process = subprocess.Popen(
         [*args, "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
@@ -87,7 +147,12 @@ def edge(tmp_path):
 def test_exchange_limit_uses_actual_tcp_peer_not_spoofed_headers(edge):
     port, received = edge
     transport = httpx.HTTPTransport(local_address="127.0.0.1")
-    with httpx.Client(transport=transport, base_url=f"http://127.0.0.1:{port}", timeout=3) as http:
+    with httpx.Client(
+        transport=transport,
+        base_url=f"http://127.0.0.1:{port}",
+        headers={"Host": "vpn.localhost"},
+        timeout=3,
+    ) as http:
         replies = []
         for n in range(10):
             response = http.post(
@@ -108,13 +173,141 @@ def test_exchange_limit_uses_actual_tcp_peer_not_spoofed_headers(edge):
         assert all(row.get("X-Real-IP") == "127.0.0.1" for row in received)
         assert all("Forwarded" not in row and "X-Forwarded-Host" not in row for row in received)
         # This limit does not share the admin login zone or limit session/profile reads.
-        assert http.post("/api/auth/login", json={}).status_code == 401
+        assert (
+            http.post("/api/auth/login", json={}, headers={"Host": "admin.localhost"}).status_code
+            == 401
+        )
         assert http.get("/api/client/session").status_code == 401
     # Another real socket source has its own bucket, even after the first is exhausted.
     with httpx.Client(
         transport=httpx.HTTPTransport(local_address="::1"),
         base_url=f"http://[::1]:{port}",
+        headers={"Host": "vpn.localhost"},
         timeout=3,
     ) as second:
         assert second.post("/api/client/exchange", json={}).status_code == 401
     assert received[-1]["X-Forwarded-For"] == "::1"
+
+
+@pytest.mark.parametrize("host,other", [("vpn.localhost", "admin"), ("admin.localhost", "client")])
+def test_origins_cannot_reach_each_others_api_even_with_credentials(edge, host, other):
+    port, received = edge
+    identity = "11111111-1111-1111-1111-111111111111"
+    admin_routes = [
+        ("POST", "/api/auth/login"),
+        ("GET", "/api/auth/me"),
+        ("POST", "/api/auth/logout"),
+        ("GET", "/api/servers"),
+        ("POST", f"/api/servers/{identity}/preflight"),
+        ("POST", f"/api/servers/{identity}/status"),
+        ("GET", "/api/vpn-users"),
+        ("GET", f"/api/vpn-users/{identity}/devices"),
+        ("GET", f"/api/vpn-users/{identity}/invitations"),
+        ("GET", "/api/jobs"),
+        ("GET", f"/api/jobs/{identity}"),
+        ("GET", f"/api/jobs/{identity}/logs"),
+        ("POST", f"/api/jobs/{identity}/cancel"),
+    ]
+    client_routes = [
+        ("POST", "/api/client/exchange"),
+        ("GET", "/api/client/session"),
+        ("GET", "/api/client/me"),
+        ("GET", "/api/client/devices"),
+        ("GET", "/api/client/servers"),
+        ("POST", "/api/client/logout"),
+        ("GET", f"/api/client/devices/{identity}/credentials"),
+        ("GET", f"/api/client/devices/{identity}/provisioning"),
+        ("POST", f"/api/client/devices/{identity}/configurations/{identity}"),
+    ]
+    opposite = admin_routes if other == "admin" else client_routes
+    own = client_routes if other == "admin" else admin_routes
+    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3) as http:
+        headers = {
+            "Host": host,
+            "Origin": "http://" + host,
+            "Authorization": "Bearer " + "A" * 43,
+            "Cookie": "__Host-ttcp_admin=" + "A" * 43 + "; __Secure-ttcp_client=" + "C" * 43,
+            "X-TTCP-Admin": "web",
+            "X-TTCP-Client": "portal",
+            "X-Forwarded-Host": "admin.localhost" if other == "admin" else "vpn.localhost",
+        }
+        before = len(received)
+        for method, path in opposite:
+            response = http.request(method, path, headers=headers)
+            assert response.status_code == 404, (host, path, response.text)
+            assert "access-control-allow-origin" not in response.headers
+            assert response.headers["cache-control"] == "no-store"
+        assert len(received) == before
+        for method, path in own:
+            assert http.request(method, path, headers=headers).status_code == 401, path
+        assert len(received) == before + len(own)
+        for path in (
+            "/api/unknown",
+            "/api/auth/sessions/" + identity,
+            "/api/servers/" + identity + "/deploy",
+            "/client/",
+            "/admin/",
+        ):
+            assert http.get(path, headers=headers).status_code == 404
+        assert http.get("/api/jobs", headers={"Host": "evil.test"}).status_code == 404
+
+
+def test_public_edge_does_not_grant_cors_or_unsupported_methods(edge):
+    port, received = edge
+    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3) as http:
+        before = len(received)
+        for host, path in (("admin.localhost", "/api/jobs"), ("vpn.localhost", "/api/client/me")):
+            response = http.options(
+                path,
+                headers={
+                    "Host": host,
+                    "Origin": "https://evil.test",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+            assert response.status_code == 403
+            assert "access-control-allow-origin" not in response.headers
+            assert "access-control-allow-credentials" not in response.headers
+        assert len(received) == before
+
+
+@pytest.mark.parametrize("edge", ["production"], indirect=True)
+def test_production_tls_hosts_use_disjoint_api_allowlists(edge):
+    port, received = edge
+    identity = "11111111-1111-1111-1111-111111111111"
+    with httpx.Client(base_url=f"https://127.0.0.1:{port}", verify=False, timeout=3) as http:
+        for host, own, opposite in (
+            (
+                "vpn.localhost",
+                "/api/client/me",
+                [
+                    "/api/auth/me",
+                    "/api/jobs",
+                    "/api/servers",
+                    "/api/vpn-users",
+                    f"/api/jobs/{identity}/logs",
+                ],
+            ),
+            (
+                "admin.localhost",
+                "/api/auth/me",
+                [
+                    "/api/client/me",
+                    "/api/client/session",
+                    "/api/client/devices",
+                    "/api/client/servers",
+                ],
+            ),
+        ):
+            headers = {"Host": host, "Authorization": "Bearer " + "A" * 43}
+            extensions = {"sni_hostname": host}
+            allowed = http.request("GET", own, headers=headers, extensions=extensions)
+            assert allowed.status_code == 401
+            assert allowed.headers["strict-transport-security"] == "max-age=31536000"
+            assert "connect-src 'self'" in allowed.headers["content-security-policy"]
+            before = len(received)
+            for path in opposite:
+                denied = http.request("GET", path, headers=headers, extensions=extensions)
+                assert denied.status_code == 404
+                assert "access-control-allow-origin" not in denied.headers
+            assert len(received) == before

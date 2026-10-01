@@ -14,9 +14,17 @@
 !alembic.ini
 !migrations/
 !migrations/**
+!infra/
+!infra/nginx/
+!infra/nginx/*.conf
+!infra/nginx/*.template
+!infra/nginx/*.sh
+!infra/nginx/Dockerfile
 apps/**/__pycache__/
 **/*.py[cod]
 **/.env
 **/.env.*
 apps/client-web/node_modules/
 apps/client-web/dist/
+apps/admin-web/node_modules/
+apps/admin-web/dist/

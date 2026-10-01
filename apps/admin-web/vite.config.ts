@@ -5,8 +5,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/",
   server: {
-    allowedHosts: ["vpn.localhost"],
-    proxy: { "/api/client": { target: "http://127.0.0.1:8080" } },
+    port: 5174,
+    strictPort: true,
+    allowedHosts: ["admin.localhost"],
+    proxy: { "/api": { target: "http://127.0.0.1:8080" } },
   },
   test: {
     testTimeout: 10000,

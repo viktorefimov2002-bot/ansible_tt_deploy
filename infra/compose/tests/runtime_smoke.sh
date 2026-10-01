@@ -95,10 +95,11 @@ dc stop metrics-collector
 dc exec -T nginx wget -qO- http://api:8080/healthz | grep -q '"ok"'
 dc up -d --wait --wait-timeout 120 metrics-collector
 dc exec -T nginx wget -qO- http://127.0.0.1:8080/healthz
-dc exec -T nginx wget -qO- http://127.0.0.1:8080/api/healthz | grep -q '"ok"'
-dc exec -T nginx wget -qO- http://127.0.0.1:8080/api/readyz | grep -q '"ready"'
-dc exec -T nginx wget -qO- http://127.0.0.1:8080/client/ | grep -q '<div id="root"'
-dc exec -T nginx sh -c 'wget -S -O /dev/null http://127.0.0.1:8080/client/ 2>&1' | grep -qi 'Cache-Control: no-store'
+dc exec -T nginx wget -qO- http://api:8080/api/healthz | grep -q '"ok"'
+dc exec -T nginx wget -qO- http://api:8080/api/readyz | grep -q '"ready"'
+dc exec -T nginx wget --header='Host: vpn.localhost' -qO- http://127.0.0.1:8080/ | grep -q '<div id="root"'
+dc exec -T nginx wget --header='Host: admin.localhost' -qO- http://127.0.0.1:8080/ | grep -q '<div id="root"'
+dc exec -T nginx sh -c 'wget --header="Host: vpn.localhost" -S -O /dev/null http://127.0.0.1:8080/ 2>&1' | grep -qi 'Cache-Control: no-store'
 dc exec -T nginx sh -c 'wget -S -O /dev/null http://127.0.0.1:8080/api/example 2>&1 || true' | grep -q '404 Not Found'
 
 # Runtime failures must not turn liveness into a restart loop; readiness recovers.

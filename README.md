@@ -13,6 +13,8 @@
 
 [Client Portal](docs/client-portal.md) предоставляет клиентский путь от приглашения
 до конфигурации TrustTunnel (TTCP-014).
+[Admin Web](docs/admin-web.md) предоставляет управление серверами, VPN users,
+приглашениями и jobs на отдельном origin (TTCP-015).
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

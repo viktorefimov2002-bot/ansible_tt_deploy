@@ -2,8 +2,10 @@
 
 ## Run and deploy
 
-Client URL through Compose/NGINX: `http://127.0.0.1:8080/client/`.
-Frontend-only development: `http://127.0.0.1:5173/client/`.
+Client URL through Compose/NGINX: `http://vpn.localhost:8080/`.
+Frontend-only development: `http://vpn.localhost:5173/`.
+TTCP-015 moves the client bundle to a separate host root. Admin Web runs at
+`http://admin.localhost:8080/`; see [deployment and acceptance](admin-web.md).
 
 From `apps/client-web`:
 
@@ -45,11 +47,11 @@ It does not enable subscriptions or generate new random-prefix rules.
 
 ## Manual acceptance journey
 
-1. Log in using existing admin API authentication (no Admin UI is introduced).
+1. Log in using [Admin Web](admin-web.md) or existing admin API authentication.
    Prepare an enabled managed server and a VPN user with access to that server.
 2. `POST /api/vpn-users/{user_id}/invitations` with the admin bearer header and `{}`.
    Use the one-time response token in
-   `http://127.0.0.1:8080/client/#invite=<token>`. Share privately. Fragment tokens
+   `http://vpn.localhost:8080/#invite=<token>`. Share privately. Fragment tokens
    are not sent to NGINX. Query `?invite=` is also accepted for compatibility;
    prefer fragments. Client static access logging is disabled.
 3. Open the link. The URL is cleaned before exchange. Verify profile, expiration

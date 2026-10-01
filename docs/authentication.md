@@ -5,6 +5,8 @@ FastAPI request context and admin authorization, initial admin enrollment, audit
 Identity CRUD, recovery/reset, client authentication and frontend UI are out of scope.
 The supplied TTCP-006 request is the task scope; the architecture additionally requires
 TOTP, which is included. See [session decision](adr/0012-admin-auth-sessions.md).
+TTCP-015 adds [Admin Web](admin-web.md) and opt-in browser cookie transport
+([ADR-0018](adr/0018-admin-web-origins.md)); the bearer/CLI contract remains available.
 
 ## Setup
 
@@ -57,13 +59,21 @@ and a server-generated `X-Request-ID`. Clients must avoid logging bodies/headers
 | POST `/logout` | Admin or viewer; own session | 204, session revoked |
 | DELETE `/sessions/{uuid}` | Admin only | 204 (also for already revoked), 404 if absent |
 
-Send `Authorization: Bearer <access_token>` on protected calls. Never put tokens in
-URLs/cookies or browser localStorage. No refresh flow exists; authenticate again after
+Send `Authorization: Bearer <access_token>` on protected CLI calls. Never put tokens in
+URLs or browser storage. Admin Web requests `session_mode: "cookie"` at login with
+`X-TTCP-Admin: web`; its response omits the token and sets `__Host-ttcp_admin`
+(Secure/HttpOnly/SameSite=Strict, Path=/, no Domain). Cookie authentication on all
+routes requires the custom header, same-origin fetch metadata and matching Origin
+host/port where supplied. There is no cross-origin CORS policy or bearer fallback
+after an explicit invalid Authorization header. Logout revokes the session and clears
+the cookie; a 401 also clears it. No refresh flow exists; authenticate again after
 expiry. `TTCP_AUTH_SESSION_SECONDS` defaults to 28800 (8 hours), range 300–86400.
 Invalid credentials return generic 401; missing/invalid/expired/revoked sessions return
 401, viewer privileged mutations return 403, malformed input returns redacted 422,
 and unavailable authentication storage/key returns 503. Account lockout uses the same
-generic 401. NGINX rate limits may return 429. Health/readiness contracts remain public.
+generic 401. NGINX rate limits may return 429. Health/readiness remain public on the
+private API; web vhosts expose only their allowlists. The session-revocation DELETE
+endpoint is available internally, outside the core Admin Web edge allowlist.
 
 Future read handlers use `Authenticated`; privileged handlers use `Administrator`
 from `apps.api.auth`. These resolve `Principal` from PostgreSQL and also place it in
