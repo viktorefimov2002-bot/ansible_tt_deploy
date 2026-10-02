@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives.serialization import load_ssh_private_key, l
 from pydantic import Field, SecretStr, field_validator
 
 from apps.execution.ports import VERSION_PATTERN, ClosedModel
+from apps.servers.configuration import ServerConfiguration
 
 
 def normalize_hostname(value: str) -> str:
@@ -93,6 +94,10 @@ class Enabled(ClosedModel):
 
 class JobInput(ClosedModel):
     idempotency_key: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class CreateConfigRevision(JobInput):
+    config: ServerConfiguration
 
 
 class UpdateWorkload(JobInput):

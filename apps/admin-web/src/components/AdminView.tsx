@@ -9,6 +9,8 @@ import { AuditView } from "./AuditView";
 import { NotificationsView } from "./NotificationsView";
 import { MonitoringView } from "./MonitoringView";
 import { ServerLifecycle } from "./ServerLifecycle";
+import { ServerConfiguration } from "./ServerConfiguration";
+import { configurationState } from "../domain/configuration";
 
 const pages: Page[] = [
   "Dashboard",
@@ -293,6 +295,7 @@ export function AdminView({ admin }: { admin: AdminState }) {
                   </dd>
                 </dl>
                 <ServerLifecycle node={node} admin={admin} />
+                <ServerConfiguration node={node} admin={admin} />
                 {writable && (
                   <>
                     <div className="actions">
@@ -584,6 +587,11 @@ export function AdminView({ admin }: { admin: AdminState }) {
                 )}
                 {admin.job.error_message && (
                   <p role="alert">{admin.job.error_message}</p>
+                )}
+                {admin.job.result?.config_apply && (
+                  <p role="status">
+                    {configurationState(admin.job.result.config_apply.state)}
+                  </p>
                 )}
                 {writable && canCancel(admin.job) && (
                   <ConfirmAction

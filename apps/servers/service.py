@@ -1,5 +1,6 @@
 from datetime import timedelta
 from hashlib import sha256
+from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
@@ -8,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.execution.ports import (
     LIFECYCLE,
+    ConfigApplyParameters,
     ExecutionRequest,
     LifecycleParameters,
     PreflightParameters,
@@ -16,7 +18,8 @@ from apps.execution.ports import (
 from apps.jobs.service import record
 from apps.jobs.worker import ExecutionFailure
 from apps.persistence.database import transaction
-from apps.persistence.models import AuditEvent, DeviceCredential, Job, Server
+from apps.persistence.models import AuditEvent, DeviceCredential, Job, Server, ServerConfigRevision
+from apps.servers.configuration import ServerConfiguration
 
 
 class ServerError(Exception):
@@ -47,10 +50,39 @@ def representation(server):
             "lifecycle_state",
             "lifecycle_job_id",
             "preflight_passed_at",
+            "config_revision_id",
+            "config_state",
+            "config_job_id",
         )
     } | {
         "ssh_configured": server.ssh_private_ciphertext is not None,
         "host_key_fingerprint": fingerprint(server.ssh_host_key),
+    }
+
+
+def revision_representation(revision, current_revision_id):
+    try:
+        config = ServerConfiguration.model_validate(revision.config_json).model_dump()
+    except ValueError:
+        config = None  # Unvalidated legacy content must never escape this boundary.
+    return {
+        name: getattr(revision, name)
+        for name in (
+            "id",
+            "server_id",
+            "revision",
+            "created_by",
+            "created_at",
+            "applied_at",
+            "status",
+            "job_id",
+            "failure_code",
+            "failure_message",
+        )
+    } | {
+        "config": config,
+        "validation_valid": config is not None,
+        "current": revision.id == current_revision_id,
     }
 
 
@@ -136,6 +168,80 @@ class ServerService:
                 raise ServerError(404, "Server not found")
             return representation(server)
 
+    async def list_revisions(self, server_id, offset=0, limit=100):
+        async with transaction(self.engine) as db:
+            server = await db.get(Server, server_id)
+            if server is None:
+                raise ServerError(404, "Server not found")
+            revisions = (
+                await db.scalars(
+                    select(ServerConfigRevision)
+                    .where(ServerConfigRevision.server_id == server_id)
+                    .order_by(ServerConfigRevision.revision.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            ).all()
+            return [revision_representation(r, server.config_revision_id) for r in revisions]
+
+    async def get_revision(self, server_id, revision_id):
+        async with transaction(self.engine) as db:
+            server = await db.get(Server, server_id)
+            if server is None:
+                raise ServerError(404, "Server not found")
+            revision = await self.owned_revision(db, server_id, revision_id)
+            return revision_representation(revision, server.config_revision_id)
+
+    @staticmethod
+    async def owned_revision(db, server_id, revision_id):
+        revision = await db.scalar(
+            select(ServerConfigRevision).where(
+                ServerConfigRevision.server_id == server_id, ServerConfigRevision.id == revision_id
+            )
+        )
+        if revision is None:
+            raise ServerError(404, "Configuration revision not found")
+        return revision
+
+    async def create_revision(self, server_id, body, actor, request_id):
+        config = ServerConfiguration.model_validate(body.config).model_dump()
+        async with transaction(self.engine) as db:
+            server = await self.get_locked(db, server_id)
+            identity = sha256(
+                f"{actor}:{server_id}:server.config.create:{body.idempotency_key}".encode()
+            ).hexdigest()
+            existing = await db.scalar(
+                select(ServerConfigRevision).where(ServerConfigRevision.idempotency_key == identity)
+            )
+            if existing:
+                if existing.config_json != config:
+                    raise ServerError(409, "Idempotency key belongs to different configuration")
+                return revision_representation(existing, server.config_revision_id)
+            number = await db.scalar(
+                select(func.coalesce(func.max(ServerConfigRevision.revision), 0)).where(
+                    ServerConfigRevision.server_id == server_id
+                )
+            )
+            revision = ServerConfigRevision(
+                server_id=server_id,
+                revision=number + 1,
+                config_json=config,
+                created_by=actor,
+                idempotency_key=identity,
+                status="validated",
+            )
+            db.add(revision)
+            await db.flush()
+            self.audit(
+                db,
+                actor,
+                "server.config.create",
+                server,
+                request_id,
+                {"revision_id": str(revision.id), "revision": revision.revision},
+            )
+            return revision_representation(revision, server.config_revision_id)
+
     async def create(self, body, actor, request_id):
         try:
             async with transaction(self.engine) as db:
@@ -177,7 +283,12 @@ class ServerService:
             raise ServerError(409, "Server name already exists") from None
 
     async def enqueue(self, server_id, operation, key, actor, request_id, parameters=None):
-        if operation not in ("server.status", "server.preflight", *LIFECYCLE):
+        if operation not in (
+            "server.status",
+            "server.preflight",
+            "server.config.apply",
+            *LIFECYCLE,
+        ):
             raise ServerError(422, "Unsupported server operation")
         parameters = parameters or {}
         # Server row serializes mutations and admission, including concurrent requests.
@@ -202,6 +313,28 @@ class ServerService:
                     raise ServerError(409, "Use update for an installed server")
             if operation in ("server.update", "server.restart") and not server.trusttunnel_version:
                 raise ServerError(409, "Server has no confirmed installed workload")
+            revision = None
+            if operation == "server.config.apply":
+                if not server.trusttunnel_version:
+                    raise ServerError(409, "Server has no confirmed installed workload")
+                try:
+                    if set(parameters) != {"revision_id"}:
+                        raise ValueError
+                    revision_id = UUID(parameters["revision_id"])
+                    if str(revision_id) != parameters["revision_id"]:
+                        raise ValueError
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    raise ServerError(422, "Invalid configuration revision") from None
+                revision = await self.owned_revision(db, server_id, revision_id)
+                if revision.job_id is not None:
+                    raise ServerError(
+                        409, "Revision has already been submitted; create a new revision to retry"
+                    )
+                try:
+                    ServerConfiguration.model_validate(revision.config_json)
+                    await self.previous_configuration(db, server)
+                except ValueError:
+                    raise ServerError(422, "Invalid configuration revision") from None
             if operation == "server.uninstall" and await db.scalar(
                 select(DeviceCredential.id)
                 .where(
@@ -227,7 +360,7 @@ class ServerService:
                 request_id=request_id,
                 idempotency_key=identity,
                 replay_safe=operation != "server.restart",
-                cancellable=operation not in LIFECYCLE,
+                cancellable=operation not in (*LIFECYCLE, "server.config.apply"),
                 parameters=parameters,
             )
             db.add(job)
@@ -240,7 +373,15 @@ class ServerService:
                 server.lifecycle_state = operation.removeprefix("server.") + "_pending"
                 if operation in ("server.deploy", "server.update"):
                     server.desired_trusttunnel_version = parameters["version"]
-            self.audit(db, actor, operation, server, request_id, {"job_id": str(job.id)})
+            if revision is not None:
+                server.config_job_id = revision.job_id = job.id
+                revision.previous_config_state = server.config_state
+                server.config_state = revision.status = "apply_pending"
+                revision.failure_code = revision.failure_message = None
+            details = {"job_id": str(job.id)}
+            if revision is not None:
+                details["revision_id"] = str(revision.id)
+            self.audit(db, actor, operation, server, request_id, details)
             return job  # Normal durable dispatcher delivers after commit, even if Redis is down.
 
     @staticmethod
@@ -297,7 +438,42 @@ class ServerService:
                     lifecycle=self.lifecycle_parameters(server, operation, parameters or {})
                     if operation in LIFECYCLE
                     else None,
-                    timeout_seconds=600 if operation in LIFECYCLE else 45,
+                    config_apply=await self.configuration_parameters(db, server, parameters or {})
+                    if operation == "server.config.apply"
+                    else None,
+                    timeout_seconds=600 if operation in (*LIFECYCLE, "server.config.apply") else 45,
                 )
             except (InvalidToken, ValueError, UnicodeError):
                 raise ExecutionFailure("execution_invalid") from None
+
+    @staticmethod
+    async def configuration_parameters(db, server, parameters):
+        if set(parameters) != {"revision_id"}:
+            raise ValueError("Invalid configuration intent")
+        revision_id = UUID(parameters["revision_id"])
+        revision = await db.scalar(
+            select(ServerConfigRevision).where(
+                ServerConfigRevision.id == revision_id, ServerConfigRevision.server_id == server.id
+            )
+        )
+        if revision is None or revision.job_id != server.config_job_id:
+            raise ValueError("Configuration intent does not match server")
+        return ConfigApplyParameters(
+            revision_id=parameters["revision_id"],
+            config=revision.config_json,
+            previous_config=await ServerService.previous_configuration(db, server),
+        )
+
+    @staticmethod
+    async def previous_configuration(db, server):
+        if server.config_revision_id is None:
+            return ServerConfiguration()
+        previous = await db.scalar(
+            select(ServerConfigRevision).where(
+                ServerConfigRevision.id == server.config_revision_id,
+                ServerConfigRevision.server_id == server.id,
+            )
+        )
+        if previous is None:
+            raise ValueError("Previous configuration revision is unavailable")
+        return ServerConfiguration.model_validate(previous.config_json)

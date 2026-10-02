@@ -25,6 +25,7 @@ DEFAULTS = "/etc/default/prometheus-node-exporter"
 PACKAGES = (
     "python3",
     "python3-jinja2",
+    "python3-tomli",
     "sudo",
     "prometheus-node-exporter",
     "certbot",

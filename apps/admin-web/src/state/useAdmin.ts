@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminApi, ApiError, invitationLink } from "../api/admin";
 import { useVisibility } from "./useVisibility";
+import { useServerConfiguration } from "./useServerConfiguration";
 import type {
   Credential,
   Device,
@@ -12,6 +13,7 @@ import type {
   Principal,
   Server,
   ServerInput,
+  ServerConfiguration,
   UserInput,
   VpnUser,
 } from "../domain/types";
@@ -41,6 +43,8 @@ export function useAdmin() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const visibility = useVisibility(api, principal, page, revision);
+  const configuration = useServerConfiguration(api, principal, revision);
+  const resetConfig = configuration.resetConfig;
   const session = useRef(0);
   const userSelection = useRef("");
   const mutation = useRef(false);
@@ -66,7 +70,8 @@ export function useAdmin() {
     setNotice("");
     setLoading(false);
     setDetailsLoading(false);
-  }, [api]);
+    resetConfig();
+  }, [api, resetConfig]);
   const report = useCallback((cause: unknown) => {
     setError(
       cause instanceof ApiError
@@ -344,6 +349,25 @@ export function useAdmin() {
     }, "Invitation created. Share the link privately; it is shown only once.");
   };
   const actions = {
+    createConfigRevision: (
+      id: string,
+      config: ServerConfiguration,
+      key: string,
+    ) =>
+      act(async (client) => {
+        await client.createConfigRevision(id, config, key);
+        configuration.pageConfig(0);
+      }, "Validated revision created. Select Apply when ready."),
+    applyConfigRevision: (id: string, configRevision: string, key: string) =>
+      act(async (client) => {
+        const operation = await client.applyConfigRevision(
+          id,
+          configRevision,
+          key,
+        );
+        navigate("Jobs");
+        selectJob(operation.id);
+      }, "Configuration apply queued. Follow its result and any rollback here."),
     lifecycle: (
       id: string,
       kind: LifecycleAction,
@@ -411,6 +435,7 @@ export function useAdmin() {
   };
   return {
     ...visibility,
+    ...configuration,
     principal,
     restoring,
     page,

@@ -2,11 +2,11 @@ listen_address = {{ trusttunnel_listen_address | to_json }}
 ipv6_available = {{ trusttunnel_ipv6_available | bool | lower }}
 allow_private_network_connections = {{ trusttunnel_allow_private_network_connections | bool | lower }}
 
-tls_handshake_timeout_secs = 10
-client_listener_timeout_secs = 600
-connection_establishment_timeout_secs = 30
-tcp_connections_timeout_secs = 604800
-udp_connections_timeout_secs = 300
+tls_handshake_timeout_secs = {{ trusttunnel_tls_handshake_timeout_secs | default(10) }}
+client_listener_timeout_secs = {{ trusttunnel_client_listener_timeout_secs | default(600) }}
+connection_establishment_timeout_secs = {{ trusttunnel_connection_establishment_timeout_secs | default(30) }}
+tcp_connections_timeout_secs = {{ trusttunnel_tcp_connections_timeout_secs | default(604800) }}
+udp_connections_timeout_secs = {{ trusttunnel_udp_connections_timeout_secs | default(300) }}
 
 credentials_file = {{ (trusttunnel_install_dir ~ '/credentials.toml') | to_json }}
 rules_file = {{ (trusttunnel_install_dir ~ '/rules.toml') | to_json }}

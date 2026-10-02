@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from apps.jobs.ports import EventPublisher, JobQueue, TransportUnavailable
 from apps.persistence.database import transaction
-from apps.persistence.models import AuditEvent, Job, Server
+from apps.persistence.models import AuditEvent, Job, Server, ServerConfigRevision
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MESSAGES = {
@@ -36,6 +36,10 @@ MESSAGES = {
     "execution_timeout": "Execution deadline exceeded; local processes stopped",
     "execution_unavailable": "Execution runtime unavailable",
     "execution_invalid": "Execution input or target is invalid",
+    "config_rolled_back": "Configuration apply failed; previous configuration restored and healthy",
+    "config_rollback_failed": (
+        "Configuration apply and rollback failed; server health requires attention"
+    ),
 }
 
 EXECUTION_EVENTS = frozenset(
@@ -55,6 +59,8 @@ EXECUTION_FAILURES = frozenset(
         "execution_timeout",
         "execution_unavailable",
         "execution_invalid",
+        "config_rolled_back",
+        "config_rollback_failed",
     }
 )
 
@@ -270,6 +276,15 @@ class JobService:
             if job.cancel_requested_at:
                 raise CancellationRequested
             job.result = {"outcome": outcome.value, "attempt": job.attempts}
+            if job.type == "server.config.apply":
+                from apps.servers.configuration import validated_config_result
+
+                if result.config_apply is not None:
+                    report = validated_config_result(job.parameters, result.config_apply)
+                    if outcome != Outcome.SUCCEEDED and report["state"] == "applied":
+                        raise ValueError("Applied configuration requires successful execution")
+                    job.result["config_apply"] = report
+                return  # Revision and current pointer commit with terminal completion.
             if job.type in LIFECYCLE:
                 from apps.execution.lifecycle import validated_result
 
@@ -313,6 +328,9 @@ class JobService:
     async def _lifecycle_terminal(self, db, job, now):
         from apps.execution.ports import LIFECYCLE
 
+        if job.type == "server.config.apply":
+            await self._config_terminal(db, job, now)
+            return
         if job.type not in LIFECYCLE or job.status not in TERMINAL:
             return
         server = await db.scalar(select(Server).where(Server.id == job.target_id).with_for_update())
@@ -328,6 +346,9 @@ class JobService:
             server.status = "reachable"
             if job.type == "server.uninstall":
                 server.desired_trusttunnel_version = None
+                server.config_revision_id = None
+                server.config_state = "idle"
+                server.config_job_id = None
             if job.type in ("server.deploy", "server.uninstall"):
                 server.preflight_passed_at = None
         elif job.status == "cancelled" and job.attempts == 0:
@@ -353,7 +374,76 @@ class JobService:
             )
         )
 
+    async def _config_terminal(self, db, job, now):
+        if job.status not in TERMINAL:
+            return
+        server = await db.scalar(select(Server).where(Server.id == job.target_id).with_for_update())
+        if server is None or server.config_job_id != job.id:
+            return
+        revision = await db.scalar(
+            select(ServerConfigRevision).where(
+                ServerConfigRevision.server_id == server.id,
+                ServerConfigRevision.id == UUID(job.parameters["revision_id"]),
+                ServerConfigRevision.job_id == job.id,
+            )
+        )
+        if revision is None:
+            return
+        from apps.servers.configuration import validated_config_result
+
+        report = (job.result or {}).get("config_apply")
+        if report is not None:
+            report = validated_config_result(job.parameters, report)
+        if job.status == "succeeded":
+            if report is None or report["state"] != "applied":
+                raise ValueError("Configuration activation is not confirmed")
+            server.config_revision_id = revision.id
+            server.config_state = revision.status = "applied"
+            server.status = "reachable"
+            server.last_seen_at = revision.applied_at = now
+            revision.failure_code = revision.failure_message = None
+        elif report is not None and report["state"] in ("rolled_back", "rollback_failed"):
+            server.config_state = revision.status = report["state"]
+            revision.failure_code = "config_" + report["state"]
+            revision.failure_message = MESSAGES[revision.failure_code]
+            server.status = "reachable" if report["active"] else "unknown"
+            if report["active"]:
+                server.last_seen_at = now
+        else:
+            # Without a validated receipt an attempted mutation may have completed
+            # remotely before its transport or worker failed. Keep the last
+            # confirmed pointer and report uncertainty, including retry exhaustion.
+            uncertain = job.attempts > 0
+            revision.status = "unknown" if uncertain else "failed"
+            server.config_state = revision.status
+            if job.status == "cancelled" and job.attempts == 0:
+                server.config_state = revision.previous_config_state or "unknown"
+            revision.failure_code = job.error_code or "cancelled"
+            revision.failure_message = MESSAGES[revision.failure_code]
+            if uncertain:
+                server.status = "unknown"
+        db.add(
+            AuditEvent(
+                actor_type="system",
+                action=job.type + "." + job.status,
+                target_type="server",
+                target_id=server.id,
+                request_id=job.request_id,
+                result="success" if job.status == "succeeded" else "failure",
+                details={
+                    "job_id": str(job.id),
+                    "revision_id": str(revision.id),
+                    "config_state": server.config_state,
+                },
+            )
+        )
+
     def _failure(self, db, job, now, code, retryable, *, acknowledge_cancel=True):
+        if job.type == "server.config.apply":
+            report = (job.result or {}).get("config_apply")
+            if report and report.get("state") in ("rolled_back", "rollback_failed"):
+                code = "config_" + report["state"]
+                retryable = False
         job.error_code, job.error_message = code, MESSAGES[code]
         if acknowledge_cancel and job.cancel_requested_at and job.cancellable:
             finish(job, "cancelled", now)

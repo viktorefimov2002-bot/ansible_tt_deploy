@@ -40,8 +40,9 @@ def config():
 
 def test_ordered_reproducible_offline_migrations():
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0010_server_lifecycle"]
+    assert scripts.get_heads() == ["0011_config_revisions"]
     assert [r.revision for r in scripts.walk_revisions()] == [
+        "0011_config_revisions",
         "0010_server_lifecycle",
         "0009_notifications",
         "0008_client_config",

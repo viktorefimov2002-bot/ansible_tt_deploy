@@ -120,6 +120,11 @@ class Server(Identity, Updated, Base):
             "'deploy_pending','update_pending','restart_pending','uninstall_pending')",
             name="lifecycle_state",
         ),
+        CheckConstraint(
+            "config_state IN ('idle','apply_pending','applied','rolled_back',"
+            "'rollback_failed','failed','unknown')",
+            name="config_state",
+        ),
         # The selected revision must belong to this server, not just exist.
         ForeignKeyConstraint(
             ["id", "config_revision_id"],
@@ -147,6 +152,8 @@ class Server(Identity, Updated, Base):
     lifecycle_job_id: Mapped[UUID | None] = mapped_column(ForeignKey("jobs.id"))
     preflight_passed_at: Mapped[datetime | None]
     config_revision_id: Mapped[UUID | None]
+    config_state: Mapped[str] = mapped_column(String(32), server_default="idle")
+    config_job_id: Mapped[UUID | None] = mapped_column(ForeignKey("jobs.id"))
     last_seen_at: Mapped[datetime | None]
     revisions: Mapped[list["ServerConfigRevision"]] = relationship(
         back_populates="server",
@@ -210,6 +217,11 @@ class ServerConfigRevision(Identity, Base):
         UniqueConstraint("server_id", "revision", name="uq_server_config_revisions_number"),
         UniqueConstraint("server_id", "id", name="uq_server_config_revisions_owner"),
         CheckConstraint("revision > 0", name="revision_positive"),
+        CheckConstraint(
+            "status IN ('pending','validated','apply_pending','applied','rolled_back',"
+            "'rollback_failed','failed','unknown')",
+            name="status",
+        ),
     )
 
     server_id: Mapped[UUID] = mapped_column(ForeignKey("servers.id"))
@@ -219,6 +231,11 @@ class ServerConfigRevision(Identity, Base):
     created_by: Mapped[UUID | None] = mapped_column(ForeignKey("admins.id"))
     applied_at: Mapped[datetime | None]
     status: Mapped[str] = mapped_column(String(32), server_default="pending")
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
+    job_id: Mapped[UUID | None] = mapped_column(ForeignKey("jobs.id"))
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    failure_message: Mapped[str | None] = mapped_column(String(255))
+    previous_config_state: Mapped[str | None] = mapped_column(String(32))
     server: Mapped[Server] = relationship(back_populates="revisions", foreign_keys=[server_id])
 
 

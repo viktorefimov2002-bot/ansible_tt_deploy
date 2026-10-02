@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query, Request
 from apps.api.auth import Administrator, Authenticated
 from apps.api.jobs import representation
 from apps.servers.schemas import (
+    CreateConfigRevision,
     CreateServer,
     Credentials,
     DeployWorkload,
@@ -15,6 +16,62 @@ from apps.servers.schemas import (
 )
 
 router = APIRouter(prefix="/api/servers")
+
+
+@router.get("/{server_id}/config-revisions")
+async def list_config_revisions(
+    server_id: UUID,
+    request: Request,
+    principal: Authenticated,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
+    return await request.app.state.servers.list_revisions(server_id, offset, limit)
+
+
+@router.get("/{server_id}/config-revisions/{revision_id}")
+async def get_config_revision(
+    server_id: UUID,
+    revision_id: UUID,
+    request: Request,
+    principal: Authenticated,
+):
+    return await request.app.state.servers.get_revision(server_id, revision_id)
+
+
+@router.post("/{server_id}/config-revisions", status_code=201)
+async def create_config_revision(
+    server_id: UUID,
+    body: CreateConfigRevision,
+    request: Request,
+    principal: Administrator,
+):
+    return await request.app.state.servers.create_revision(
+        server_id,
+        body,
+        principal.admin_id,
+        request.state.request_id,
+    )
+
+
+@router.post("/{server_id}/config-revisions/{revision_id}/apply", status_code=202)
+async def apply_config_revision(
+    server_id: UUID,
+    revision_id: UUID,
+    body: JobInput,
+    request: Request,
+    principal: Administrator,
+):
+    return representation(
+        await request.app.state.servers.enqueue(
+            server_id,
+            "server.config.apply",
+            body.idempotency_key,
+            principal.admin_id,
+            request.state.request_id,
+            {"revision_id": str(revision_id)},
+        )
+    )
 
 
 async def lifecycle(server_id, body, request, principal, operation):

@@ -129,6 +129,7 @@ class AnsibleExecutionAdapter:
                     checks["ssh"] = "fail"
                 configuration = None
                 lifecycle = None
+                config_apply = None
                 report = cwd / "lifecycle.json"
                 if request.operation in LIFECYCLE and outcome == Outcome.SUCCEEDED:
                     assert request.lifecycle is not None
@@ -140,6 +141,19 @@ class AnsibleExecutionAdapter:
                         lifecycle = validated_result(
                             request.operation,
                             request.lifecycle.model_dump(),
+                            json.loads(report.read_text(encoding="utf-8")),
+                        )
+                    except (ValueError, TypeError, UnicodeError):
+                        return ExecutionResult(Outcome.INVALID)
+                if request.operation == "server.config.apply" and outcome == Outcome.SUCCEEDED:
+                    assert request.config_apply is not None
+                    from apps.servers.configuration import validated_config_result
+
+                    try:
+                        if not report.is_file() or report.stat().st_size > 1024:
+                            raise ValueError
+                        config_apply = validated_config_result(
+                            {"revision_id": request.config_apply.revision_id},
                             json.loads(report.read_text(encoding="utf-8")),
                         )
                     except (ValueError, TypeError, UnicodeError):
@@ -158,7 +172,9 @@ class AnsibleExecutionAdapter:
                             raise ValueError
                     except (ValueError, TypeError, UnicodeError):
                         return ExecutionResult(Outcome.INVALID)
-                return ExecutionResult(outcome, code, checks, configuration, lifecycle)
+                return ExecutionResult(
+                    outcome, code, checks, configuration, lifecycle, config_apply
+                )
         except TimeoutError:
             return ExecutionResult(Outcome.TIMED_OUT, checks=checks)
         except OSError:
@@ -196,6 +212,17 @@ class AnsibleExecutionAdapter:
                 host["ansible_ssh_private_key_file"] = str(cwd / "identity")
                 host["ansible_ssh_common_args"] = "-o BatchMode=yes"
         write("inventory.json", json.dumps({"trusttunnel": {"hosts": {"managed": host}}}))
+        lifecycle_payload = None
+        if request.lifecycle is not None:
+            lifecycle_payload = {
+                "operation": request.operation,
+                **request.lifecycle.model_dump(exclude_none=True),
+            }
+        elif request.config_apply is not None:
+            lifecycle_payload = {
+                "operation": request.operation,
+                **request.config_apply.model_dump(),
+            }
         write(
             "parameters.json",
             json.dumps(
@@ -224,12 +251,7 @@ class AnsibleExecutionAdapter:
                         if request.credential
                         else None
                     ),
-                    "ttcp_lifecycle_payload": {
-                        "operation": request.operation,
-                        **request.lifecycle.model_dump(exclude_none=True),
-                    }
-                    if request.lifecycle
-                    else None,
+                    "ttcp_lifecycle_payload": lifecycle_payload,
                 }
             ),
         )
@@ -266,7 +288,7 @@ class AnsibleExecutionAdapter:
                     else "managed-credential.yml"
                     if request.operation.startswith("credential.")
                     else "managed-lifecycle.yml"
-                    if request.operation in LIFECYCLE
+                    if request.operation in (*LIFECYCLE, "server.config.apply")
                     else "managed-status.yml"
                 )
             ),

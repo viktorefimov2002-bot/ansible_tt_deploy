@@ -7,6 +7,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
+from apps.servers.configuration import ServerConfiguration
+
 
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
@@ -95,6 +97,12 @@ class LifecycleParameters(ClosedModel):
     )
 
 
+class ConfigApplyParameters(ClosedModel):
+    revision_id: str = Field(pattern=r"^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")
+    config: ServerConfiguration
+    previous_config: ServerConfiguration = Field(default_factory=ServerConfiguration)
+
+
 def preflight_ready(checks, acme_http):
     return (
         isinstance(checks, dict)
@@ -120,17 +128,19 @@ class ExecutionRequest(ClosedModel):
         "server.restart",
         "server.update",
         "server.uninstall",
+        "server.config.apply",
     ]
     target: Target | None = Field(default=None, repr=False, exclude=True)
     parameters: StatusParameters = Field(default_factory=StatusParameters)
     preflight: PreflightParameters | None = None
     credential: CredentialParameters | None = Field(default=None, repr=False, exclude=True)
     lifecycle: LifecycleParameters | None = None
+    config_apply: ConfigApplyParameters | None = None
     timeout_seconds: int = Field(default=45, strict=True, ge=1, le=600)
 
     @model_validator(mode="after")
     def selected_target(self):
-        if self.operation not in LIFECYCLE and self.timeout_seconds > 45:
+        if self.operation not in (*LIFECYCLE, "server.config.apply") and self.timeout_seconds > 45:
             raise ValueError("Only lifecycle operations admit extended deadlines")
         if self.operation in LIFECYCLE:
             p = self.lifecycle
@@ -145,6 +155,8 @@ class ExecutionRequest(ClosedModel):
                 raise ValueError("Deployment parameters are operation-specific")
         elif self.lifecycle is not None:
             raise ValueError("Lifecycle parameters are operation-specific")
+        if (self.operation == "server.config.apply") != (self.config_apply is not None):
+            raise ValueError("Configuration parameters are operation-specific")
         if (self.operation != "execution.validate") != (self.target is not None):
             raise ValueError("Operation requires an explicit, appropriate target")
         if (self.operation == "server.preflight") != (self.preflight is not None):
@@ -184,6 +196,7 @@ class ExecutionResult:
     checks: dict[str, str] | None = None
     configuration: dict[str, str] | None = field(default=None, repr=False)
     lifecycle: dict | None = None
+    config_apply: dict | None = None
 
 
 EventSink = Callable[[ExecutionEvent], Awaitable[None]]

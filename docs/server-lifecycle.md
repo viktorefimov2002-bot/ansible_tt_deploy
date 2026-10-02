@@ -67,7 +67,9 @@ pre-flight then permits redeployment. If a partial operation fails, fix the node
 prerequisite and retry with a fresh key; an uncertain restart needs operator inspection.
 The helper refuses foreign workload paths and unsafe writable/symlinked ancestors.
 
-Configuration revisions and rollback are deliberately deferred to TTCP-018.
+Configuration revisions and automatic rollback are implemented by
+[TTCP-018](server-configuration.md). The four lifecycle POST routes are explicitly
+allowed at the Admin NGINX origin and covered through real development/TLS edges.
 
 ## Validation record — 2026-10-02
 

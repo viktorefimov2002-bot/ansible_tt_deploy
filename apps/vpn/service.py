@@ -389,9 +389,10 @@ class VpnService:
             if (
                 server.lifecycle_state.endswith("_pending")
                 or server.lifecycle_state == "uninstalled"
+                or server.config_state == "apply_pending"
             ):
                 raise VpnError(
-                    409, "Server workload is unavailable or has an active lifecycle operation"
+                    409, "Server workload is unavailable or has an active server operation"
                 )
             if not server.ssh_host_key or not server.ssh_private_ciphertext:
                 raise VpnError(409, "Server management unavailable")

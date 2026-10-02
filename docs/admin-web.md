@@ -112,6 +112,11 @@ Certificate issuance/renewal and full production operations remain operator work
 
 ## Application boundaries and validation
 
+TTCP-018 adds [server configuration revisions](server-configuration.md) under
+Servers: validated revision creation, immutable history, confirmed apply, current
+state and safe rollback/failure details. Viewer has read-only history and job links.
+The new configuration domain/API/state modules remain independent of presentation.
+
 Replace `src/components/`, `src/components/ui/` and `src/styles.css` with future
 Figma presentation. Keep `src/domain/` for contracts, `src/api/` for host-relative
 HTTP and stream handling, and `src/state/` for authentication, polling, permissions,

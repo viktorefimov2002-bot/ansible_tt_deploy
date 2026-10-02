@@ -13,6 +13,9 @@
 
 [Client Portal](docs/client-portal.md) предоставляет клиентский путь от приглашения
 до конфигурации TrustTunnel (TTCP-014).
+
+[Server configuration revisions](docs/server-configuration.md) provide validated,
+immutable settings and durable apply with automatic rollback (TTCP-018).
 [Admin Web](docs/admin-web.md) предоставляет управление серверами, VPN users,
 приглашениями и jobs на отдельном origin (TTCP-015).
 [Мониторинг, аудит и уведомления](docs/admin-visibility.md) завершают операционную

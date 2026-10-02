@@ -35,8 +35,34 @@ export interface Server extends ServerInput {
   preflight_passed_at: string | null;
   trusttunnel_version: string | null;
   desired_trusttunnel_version: string | null;
+  config_revision_id: string | null;
+  config_state: string;
+  config_job_id: string | null;
 }
 export type LifecycleAction = "deploy" | "update" | "restart" | "uninstall";
+export interface ServerConfiguration {
+  ipv6_available: boolean;
+  allow_private_network_connections: boolean;
+  tls_handshake_timeout_secs: number;
+  client_listener_timeout_secs: number;
+  connection_establishment_timeout_secs: number;
+  tcp_connections_timeout_secs: number;
+  udp_connections_timeout_secs: number;
+}
+export interface ConfigRevision {
+  id: string;
+  server_id: string;
+  revision: number;
+  config: ServerConfiguration | null;
+  validation_valid?: boolean;
+  created_by: string | null;
+  created_at: string;
+  applied_at: string | null;
+  status: string;
+  job_id: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+}
 export interface UserInput {
   display_name: string;
   device_limit: number;
@@ -91,6 +117,11 @@ export interface Job {
     outcome?: string;
     ready?: boolean;
     checks?: Record<string, string>;
+    config_apply?: {
+      revision_id: string;
+      state: "applied" | "rolled_back" | "rollback_failed";
+      active: boolean;
+    };
   };
 }
 export const terminal = (job: Job) =>

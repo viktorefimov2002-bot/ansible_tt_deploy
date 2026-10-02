@@ -30,7 +30,7 @@ def execution_handlers(
                 raise ExecutionFailure("execution_invalid")
             request = ExecutionRequest(operation="execution.validate")
         elif (
-            job.type in ("server.status", "server.preflight", *LIFECYCLE)
+            job.type in ("server.status", "server.preflight", "server.config.apply", *LIFECYCLE)
             and job.target_type == "server"
             and job.target_id is not None
             and resolver is not None
@@ -39,7 +39,7 @@ def execution_handlers(
                 await resolver.resolve(job.target_id)
                 if job.type == "server.status"
                 else await resolver.resolve(job.target_id, job.type, job.parameters)
-                if job.type in LIFECYCLE
+                if job.type in (*LIFECYCLE, "server.config.apply")
                 else await resolver.resolve(job.target_id, job.type)
             )
             if request.operation != job.type:
@@ -65,16 +65,28 @@ def execution_handlers(
             result = await active
             await context.service.check_execution(context.job_id, context.token)
             if resolver is not None and job.target_type == "server":
-                await context.service.execution_result(context.job_id, context.token, result)
+                try:
+                    await context.service.execution_result(context.job_id, context.token, result)
+                except ValueError:
+                    raise ExecutionFailure("execution_invalid") from None
             if job.type == "server.preflight" and result.checks is not None:
                 # A completed diagnostic may contain failed/unknown checks. Preserve the
                 # report instead of turning prerequisite failures into worker failures.
                 return
+            if job.type == "server.config.apply" and result.config_apply is not None:
+                from apps.servers.configuration import validated_config_result
+
+                report = validated_config_result(job.parameters, result.config_apply)
+                if report["state"] != "applied":
+                    # A recovered failed attempt must remain failed; never replay
+                    # the candidate automatically after a confirmed rollback.
+                    raise ExecutionFailure("config_" + report["state"])
             if result.outcome != Outcome.SUCCEEDED:
                 if job.type in (
                     "server.deploy",
                     "server.update",
                     "server.uninstall",
+                    "server.config.apply",
                 ) and result.outcome in (
                     Outcome.UNREACHABLE,
                     Outcome.TIMED_OUT,
@@ -84,6 +96,8 @@ def execution_handlers(
                     raise RetryableError
                 raise ExecutionFailure(result.outcome.value)
             if job.type in LIFECYCLE and result.lifecycle is None:
+                raise ExecutionFailure("execution_invalid")
+            if job.type == "server.config.apply" and result.config_apply is None:
                 raise ExecutionFailure("execution_invalid")
         finally:
             active.cancel()
@@ -102,4 +116,10 @@ def execution_handlers(
                 cancellable=False,
                 timeout_seconds=620,
             )
+        handlers["server.config.apply"] = Handler(
+            execute,
+            replay_safe=True,
+            cancellable=False,
+            timeout_seconds=620,
+        )
     return handlers

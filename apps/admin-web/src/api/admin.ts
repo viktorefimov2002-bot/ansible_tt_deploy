@@ -2,6 +2,7 @@ import type {
   AuditEvent,
   AuditFilters,
   Credential,
+  ConfigRevision,
   Device,
   Invitation,
   Job,
@@ -15,6 +16,7 @@ import type {
   Principal,
   Server,
   ServerInput,
+  ServerConfiguration,
   UserInput,
   VpnUser,
 } from "../domain/types";
@@ -122,6 +124,29 @@ export class AdminApi {
       ...(version ? { version } : {}),
       ...(acme_email ? { acme_email } : {}),
     });
+  configRevisions = (id: string, offset = 0) =>
+    this.request<ConfigRevision[]>(
+      `/servers/${id}/config-revisions?offset=${offset}&limit=50`,
+    );
+  createConfigRevision = (
+    id: string,
+    config: ServerConfiguration,
+    idempotency_key: string,
+  ) =>
+    this.request<ConfigRevision>(`/servers/${id}/config-revisions`, "POST", {
+      config,
+      idempotency_key,
+    });
+  applyConfigRevision = (
+    id: string,
+    revision: string,
+    idempotency_key: string,
+  ) =>
+    this.request<Job>(
+      `/servers/${id}/config-revisions/${revision}/apply`,
+      "POST",
+      { idempotency_key },
+    );
   users = () => this.request<VpnUser[]>("/vpn-users");
   createUser = (body: UserInput) =>
     this.request<VpnUser>("/vpn-users", "POST", body);
