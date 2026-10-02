@@ -6,6 +6,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     public.admins, public.vpn_users, public.servers, public.server_access,
     public.devices, public.device_credentials, public.server_config_revisions,
     public.admin_sessions, public.client_sessions, public.invitations, public.jobs,
-    public.notification_reads
+    public.notification_reads, public.operational_alerts
     TO :"app_role";
 GRANT SELECT, INSERT ON public.audit_events TO :"app_role";

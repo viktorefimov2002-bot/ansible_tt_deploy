@@ -9,6 +9,8 @@ from apps.execution.jobs import execution_handlers
 from apps.jobs.redis import RedisTransport
 from apps.jobs.service import JobService
 from apps.jobs.worker import HANDLERS, Worker
+from apps.monitoring.alerts import OperationalAlertService
+from apps.monitoring.query import MetricsClient
 from apps.servers.service import ServerService
 from apps.shared.config import ConfigurationError, Settings, load_settings
 from apps.shared.dependencies import DependencyUnavailable, connected_dependencies
@@ -30,6 +32,17 @@ async def run(settings: Settings, stop: asyncio.Event):
             else None,
         )
         port = AnsibleExecutionAdapter()
+        metrics = MetricsClient(
+            settings.victoriametrics_host,
+            settings.victoriametrics_port,
+            settings.monitoring_timeout,
+        )
+        alerts = OperationalAlertService(dependencies.engine, metrics)
+
+        async def maintenance():
+            await vpn.expire_due()
+            await alerts.tick()
+
         worker = Worker(
             JobService(dependencies.engine, transport, transport),
             {
@@ -45,7 +58,7 @@ async def run(settings: Settings, stop: asyncio.Event):
                 ),
                 **credential_handlers(port, vpn),
             },
-            maintenance=vpn.expire_due,
+            maintenance=maintenance,
         )
         consumer = asyncio.create_task(worker.run(stop))
         previous = True
@@ -66,7 +79,10 @@ async def run(settings: Settings, stop: asyncio.Event):
         finally:
             logger.info("worker_stopping")
             stop.set()
-            await consumer
+            try:
+                await consumer
+            finally:
+                await metrics.close()
     logger.info("worker_stopped")
 
 

@@ -20,6 +20,8 @@ immutable settings and durable apply with automatic rollback (TTCP-018).
 приглашениями и jobs на отдельном origin (TTCP-015).
 [Мониторинг, аудит и уведомления](docs/admin-visibility.md) завершают операционную
 видимость Admin Web (TTCP-016).
+[Durable operational alerts](docs/operational-alerts.md) turn trusted node/service
+and sustained disk/memory observations into PostgreSQL-backed incidents (TTCP-019).
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

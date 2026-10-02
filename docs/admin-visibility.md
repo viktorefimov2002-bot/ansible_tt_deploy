@@ -75,11 +75,11 @@ unsupported methods and unknown subroutes before the API; the VPN host exposes
 none of them. Presentation remains in components/styles, with contracts, HTTP and
 state orchestration in the existing Figma-replaceable layers.
 
-The feed uses available operational/security event sources. Automatic offline,
-service-down, resource-threshold, certificate, update and backup alerts require
-future event producers. They are not inferred or persisted during a Monitoring
-read. Telegram, server deploy/update/restart/uninstall and configuration revisions
-are outside TTCP-016. See [ADR-0019](adr/0019-admin-visibility.md).
+The feed uses available operational/security event sources. TTCP-019 adds
+[durable worker-produced node, service, disk and memory alerts](operational-alerts.md).
+They are not inferred or persisted during a Monitoring read. Certificate, update,
+network saturation and backup sources remain deferred; Telegram remains outside
+scope. See [ADR-0019](adr/0019-admin-visibility.md) for the existing feed contract.
 
 ## Manual acceptance
 

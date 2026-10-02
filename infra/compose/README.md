@@ -9,6 +9,9 @@ TTCP-015 adds [Admin Web and the separate-origin HTTPS overlay](../../docs/admin
 Local web URLs are `http://admin.localhost:8080/` and `http://vpn.localhost:8080/`.
 The production overlay requires Compose 2.24.4+, distinct DNS names and mounted TLS
 certificates; it replaces the development entrypoint's ports and configuration.
+TTCP-019 adds [durable operational alerts](../../docs/operational-alerts.md) through
+worker maintenance on the private metrics network. Apply migration
+`0012_operational_alerts` and reapply runtime grants before restarting the updated worker/API.
 
 ## Запуск
 

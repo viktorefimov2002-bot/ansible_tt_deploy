@@ -48,6 +48,34 @@ def combined(expressions):
 
 
 CURRENT_QUERY = combined(METRICS | STATUS)
+
+
+def same_scrape(metric):
+    # Reject lookback values left behind when a subsequent collection omits a
+    # field. Arithmetic expressions otherwise receive the query's timestamp.
+    return (
+        f"({metric} and (timestamp({metric}) == on(server_id) group_left "
+        "timestamp(ttcp_node_scrape_success)))"
+    )
+
+
+FILESYSTEM = '{fstype!~"tmpfs|devtmpfs|squashfs|overlay"}'
+ALERT_QUERY = combined(
+    STATUS
+    | {key: same_scrape(STATUS[key]) for key in ("probe", "active", "process")}
+    | {
+        "memory_percent": "100 * (1 - "
+        + same_scrape("node_memory_MemAvailable_bytes")
+        + " / "
+        + same_scrape("node_memory_MemTotal_bytes")
+        + ")",
+        "disk_percent": "100 * max by (server_id) (1 - "
+        + same_scrape("node_filesystem_avail_bytes" + FILESYSTEM)
+        + " / "
+        + same_scrape("node_filesystem_size_bytes" + FILESYSTEM)
+        + ")",
+    }
+)
 # Gate historical metrics by the scrape result and original sample timestamp.
 # Range step must never turn an old sample into a current observation.
 RECENT_QUERY = combined(
@@ -138,3 +166,6 @@ class MetricsClient:
             ),
         )
         return current, recent
+
+    async def alerts(self, now):
+        return await self._query("/api/v1/query", {"query": ALERT_QUERY, "time": now}, "vector")

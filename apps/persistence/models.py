@@ -267,6 +267,28 @@ class NotificationRead(Base):
     read_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class OperationalAlert(Base):
+    """One durable evaluation cursor and active incident per server/condition."""
+
+    __tablename__ = "operational_alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('NODE_OFFLINE','SERVICE_DOWN','DISK_HIGH','MEMORY_HIGH')", name="type"
+        ),
+        CheckConstraint("(incident_id IS NULL) = (opened_at IS NULL)", name="incident"),
+        CheckConstraint("(pending_state IS NULL) = (pending_since IS NULL)", name="pending"),
+    )
+
+    server_id: Mapped[UUID] = mapped_column(ForeignKey("servers.id"), primary_key=True)
+    type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    incident_id: Mapped[UUID | None]
+    opened_at: Mapped[datetime | None]
+    pending_state: Mapped[bool | None]
+    pending_since: Mapped[datetime | None]
+    last_observed_at: Mapped[datetime | None]
+    last_evaluated_at: Mapped[datetime | None]
+
+
 class Job(Identity, Updated, Base):
     __tablename__ = "jobs"
     __table_args__ = (

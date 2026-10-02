@@ -119,13 +119,15 @@ services:
     environment:
       <<: *app-environment
       TTCP_AUTH_ENCRYPTION_KEY: ${TTCP_AUTH_ENCRYPTION_KEY:-}
+      TTCP_VICTORIAMETRICS_HOST: victoriametrics
+      TTCP_VICTORIAMETRICS_PORT: 8428
     command: [python, -m, apps.worker]
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=64m
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    networks: [database, queue, management_egress]
+    networks: [database, queue, management_egress, metrics]
     mem_limit: 128m
     stop_grace_period: 30s
     depends_on:

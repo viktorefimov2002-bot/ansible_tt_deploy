@@ -12,6 +12,46 @@ from apps.persistence.models import AuditEvent, NotificationRead
 # Reviewed templates are the only notification text source. Audit metadata and
 # free-form failures never enter this representation.
 NOTIFICATION_TYPES = {
+    ("alert.node_offline", "open", "server"): (
+        "critical",
+        "Node monitoring unavailable",
+        "Managed-node collection has failed or remained stale. Check the node and management path.",
+    ),
+    ("alert.node_offline", "recovered", "server"): (
+        "info",
+        "Node monitoring recovered",
+        "Fresh managed-node collection has resumed.",
+    ),
+    ("alert.service_down", "open", "server"): (
+        "critical",
+        "TrustTunnel service down or degraded",
+        "The service or process is down, or the fixed service health probe is failing.",
+    ),
+    ("alert.service_down", "recovered", "server"): (
+        "info",
+        "TrustTunnel service recovered",
+        "The fixed service probe confirms an active service and running process.",
+    ),
+    ("alert.disk_high", "open", "server"): (
+        "warning",
+        "Sustained high disk usage",
+        "Observed filesystem usage has remained at or above 90% for five minutes.",
+    ),
+    ("alert.disk_high", "recovered", "server"): (
+        "info",
+        "Disk usage recovered",
+        "Observed filesystem usage has remained at or below 85% for one minute.",
+    ),
+    ("alert.memory_high", "open", "server"): (
+        "warning",
+        "Sustained high memory usage",
+        "Observed memory usage has remained at or above 90% for five minutes.",
+    ),
+    ("alert.memory_high", "recovered", "server"): (
+        "info",
+        "Memory usage recovered",
+        "Observed memory usage has remained at or below 80% for one minute.",
+    ),
     ("auth.login", "denied", "admin"): (
         "warning",
         "Sign-in failed",

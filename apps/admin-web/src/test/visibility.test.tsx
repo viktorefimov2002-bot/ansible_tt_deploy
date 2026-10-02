@@ -201,6 +201,42 @@ afterEach(() => {
 const notificationsButton = () =>
   screen.getByRole("button", { name: /^Notifications/ });
 
+test("viewer sees operational opening and recovery with shared incident context", async () => {
+  role = "viewer";
+  entries = [
+    {
+      ...entries[0],
+      title: "Node monitoring unavailable",
+      message: "Managed-node collection has failed or remained stale.",
+      target_type: "server",
+      target_id: "managed-node",
+      request_id: "incident-019",
+    },
+    {
+      ...entries[0],
+      id: "recovery",
+      severity: "info",
+      title: "Node monitoring recovered",
+      message: "Fresh managed-node collection has resumed.",
+      target_type: "server",
+      target_id: "managed-node",
+      request_id: "incident-019",
+    },
+  ];
+  render(<App />);
+  const user = userEvent.setup();
+  await screen.findByText("operator");
+  await user.click(notificationsButton());
+  await screen.findByText("Node monitoring unavailable");
+  expect(screen.getByText("Node monitoring recovered")).toBeInTheDocument();
+  expect(screen.getAllByText("incident-019")).toHaveLength(2);
+  expect(screen.getAllByText("server managed-node")).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Mark read" })).toBeNull();
+  expect(requests.filter((request) => request.method !== "GET")).toHaveLength(
+    0,
+  );
+});
+
 test("audit filters are encoded, paginate on the backend and reset to newest page", async () => {
   render(<App />);
   const user = userEvent.setup();
