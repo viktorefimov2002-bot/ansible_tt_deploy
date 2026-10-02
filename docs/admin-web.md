@@ -1,5 +1,10 @@
 # TTCP-015 — Admin Web core
 
+TTCP-020 adds **Backups**: latest outcome, history, verified snapshot age, job links
+and an admin-only fixed **Run backup now** action. History refreshes every five seconds.
+Viewers inspect only. Failed/unknown outcomes stay explicit; there is no restore UI.
+See [remote backup configuration and recovery](backups.md).
+
 TTCP-017 adds server workload lifecycle controls and version/state/job links.
 See [managed lifecycle](server-lifecycle.md) for requirements and recovery.
 

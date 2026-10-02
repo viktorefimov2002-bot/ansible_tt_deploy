@@ -12,6 +12,21 @@ from apps.persistence.models import AuditEvent, NotificationRead
 # Reviewed templates are the only notification text source. Audit metadata and
 # free-form failures never enter this representation.
 NOTIFICATION_TYPES = {
+    ("backup.succeeded", "success", "job"): (
+        "info",
+        "Backup completed",
+        "An encrypted off-host backup was uploaded and verified.",
+    ),
+    ("backup.failed", "failure", "job"): (
+        "critical",
+        "BACKUP_FAILED",
+        "Backup failed. Inspect its safe job log and the backup runbook.",
+    ),
+    ("backup.unknown", "failure", "job"): (
+        "critical",
+        "BACKUP_FAILED",
+        "Backup outcome is unknown. Verify the remote archive with the maintenance CLI.",
+    ),
     ("alert.node_offline", "open", "server"): (
         "critical",
         "Node monitoring unavailable",
@@ -134,6 +149,9 @@ def notification_view(event, read_at):
     severity, title, message = NOTIFICATION_TYPES[(event.action, event.result, event.target_type)]
     return {
         "id": event.id,
+        "type": "BACKUP_FAILED"
+        if event.action in ("backup.failed", "backup.unknown")
+        else ("BACKUP_SUCCEEDED" if event.action == "backup.succeeded" else event.action),
         "created_at": event.created_at,
         "severity": severity,
         "title": title,

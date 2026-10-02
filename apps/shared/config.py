@@ -59,6 +59,8 @@ class AuthSettings(DatabaseSettings):
 
 
 class Settings(AuthSettings):
+    backup_enabled: bool = False
+    backup_config_file: str | None = None
     redis_host: str = Field(min_length=1)
     redis_port: Port = 6379
     redis_password: SecretStr

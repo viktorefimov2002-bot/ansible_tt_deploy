@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminApi, ApiError, invitationLink } from "../api/admin";
 import { useVisibility } from "./useVisibility";
+import { useBackups } from "./useBackups";
 import { useServerConfiguration } from "./useServerConfiguration";
 import type {
   Credential,
@@ -43,6 +44,7 @@ export function useAdmin() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const visibility = useVisibility(api, principal, page, revision);
+  const backups = useBackups(api, principal, page, revision);
   const configuration = useServerConfiguration(api, principal, revision);
   const resetConfig = configuration.resetConfig;
   const session = useRef(0);
@@ -349,6 +351,14 @@ export function useAdmin() {
     }, "Invitation created. Share the link privately; it is shown only once.");
   };
   const actions = {
+    runBackup: async (key: string) => {
+      let accepted = false;
+      await act(async (client) => {
+        await client.runBackup(key);
+        accepted = true;
+      }, "Backup queued. History will update as it runs.");
+      return accepted;
+    },
     createConfigRevision: (
       id: string,
       config: ServerConfiguration,
@@ -434,6 +444,7 @@ export function useAdmin() {
       ),
   };
   return {
+    ...backups,
     ...visibility,
     ...configuration,
     principal,

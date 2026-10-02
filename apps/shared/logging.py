@@ -45,6 +45,8 @@ def configure_logging(service: str, level: str = "INFO") -> None:
                 "uvicorn.error": {"handlers": [], "propagate": True},
                 "uvicorn.access": {"handlers": [], "propagate": False},
                 "sqlalchemy.engine": {"level": "WARNING"},
+                "httpx": {"level": "WARNING"},
+                "httpcore": {"level": "WARNING"},
             },
         }
     )

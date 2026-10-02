@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
+from apps.backups.config import BackupFailure
 from apps.jobs.ports import TransportUnavailable
 from apps.jobs.service import EXECUTION_FAILURES, CancellationRequested, JobService, LostClaim
 
@@ -91,6 +92,8 @@ class Worker:
             code, retryable = "handler_failed", True
         except ExecutionFailure as exc:
             code = exc.code
+        except BackupFailure as exc:
+            code, retryable = exc.code, exc.retryable
         except asyncio.CancelledError:
             code = "shutdown" if job.replay_safe else "unsafe_outcome"
             try:

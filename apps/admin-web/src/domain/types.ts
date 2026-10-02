@@ -4,6 +4,7 @@ export type Page =
   | "VPN users"
   | "Invitations"
   | "Jobs"
+  | "Backups"
   | "Monitoring"
   | "Audit"
   | "Notifications";
@@ -12,6 +13,33 @@ export interface Principal {
   username: string;
   role: "admin" | "viewer";
   session_id: string;
+}
+export interface Backup {
+  id: string;
+  status:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "unknown"
+    | "cancelled";
+  job_status: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  error_code: string | null;
+}
+export interface BackupHistory {
+  enabled: boolean;
+  items: Backup[];
+  latest: Backup | null;
+  last_success: Backup | null;
+  age_seconds: number | null;
+  offset: number;
+  limit: number;
+  total: number;
 }
 export interface ServerInput {
   name: string;

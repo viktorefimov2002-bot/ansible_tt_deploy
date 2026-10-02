@@ -6,6 +6,7 @@ import { ConfirmAction } from "./ConfirmAction";
 import { ServerForm } from "./ServerForm";
 import { UserDetails, UserForm } from "./UserDetails";
 import { AuditView } from "./AuditView";
+import { BackupsView } from "./BackupsView";
 import { NotificationsView } from "./NotificationsView";
 import { MonitoringView } from "./MonitoringView";
 import { ServerLifecycle } from "./ServerLifecycle";
@@ -18,6 +19,7 @@ const pages: Page[] = [
   "VPN users",
   "Invitations",
   "Jobs",
+  "Backups",
   "Monitoring",
   "Audit",
   "Notifications",
@@ -142,6 +144,7 @@ export function AdminView({ admin }: { admin: AdminState }) {
             disabled={
               admin.busy ||
               admin.loading ||
+              (admin.page === "Backups" && admin.backupsLoading) ||
               (admin.page === "Monitoring" && admin.monitoringLoading) ||
               (admin.page === "Audit" && admin.auditLoading) ||
               (admin.page === "Notifications" && admin.notificationsLoading)
@@ -168,6 +171,7 @@ export function AdminView({ admin }: { admin: AdminState }) {
         )}
         {admin.loading && <p role="status">Loading latest state…</p>}
         {admin.page === "Monitoring" && <MonitoringView admin={admin} />}
+        {admin.page === "Backups" && <BackupsView admin={admin} />}
         {admin.page === "Audit" && <AuditView admin={admin} />}
         {admin.page === "Notifications" && <NotificationsView admin={admin} />}
         {admin.page === "Dashboard" && (

@@ -1,4 +1,5 @@
 import type {
+  BackupHistory,
   AuditEvent,
   AuditFilters,
   Credential,
@@ -78,6 +79,10 @@ export class AdminApi {
       session_mode: "cookie",
     });
   me = () => this.request<Principal>("/auth/me");
+  backups = (offset = 0) =>
+    this.request<BackupHistory>(`/backups?offset=${offset}&limit=50`);
+  runBackup = (idempotency_key: string) =>
+    this.request<Job>("/backups/run", "POST", { idempotency_key });
   async logout() {
     try {
       await this.request("/auth/logout", "POST");

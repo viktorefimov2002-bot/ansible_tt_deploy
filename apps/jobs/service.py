@@ -13,6 +13,9 @@ from apps.persistence.models import AuditEvent, Job, Server, ServerConfigRevisio
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MESSAGES = {
+    "backup_failed": "Backup failed; inspect the backup recovery runbook",
+    "backup_unknown": "Remote backup outcome is unknown; verify the remote archive",
+    "backup_unavailable": "Protected backup configuration or runtime is unavailable",
     "queued": "Job queued",
     "running": "Attempt started",
     "checkpoint": "Handler checkpoint",
@@ -261,6 +264,31 @@ class JobService:
             if job.cancel_requested_at:
                 raise CancellationRequested
 
+    async def backup_result(self, job_id: UUID, token: UUID, result: dict):
+        phase = result.get("phase")
+        allowed = (
+            {"phase", "sha256", "encrypted_bytes", "key_id"} if phase == "verified" else {"phase"}
+        )
+        if phase not in ("dumping", "uploading", "verified") or set(result) != allowed:
+            raise ValueError("Invalid backup result")
+        if phase == "verified":
+            import re
+
+            if (
+                not isinstance(result["sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", result["sha256"])
+                or type(result["encrypted_bytes"]) is not int
+                or not 84 < result["encrypted_bytes"] <= 1024**3
+                or not isinstance(result["key_id"], str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", result["key_id"])
+            ):
+                raise ValueError("Invalid backup receipt")
+        async with transaction(self.engine) as db:
+            job, _ = await self._owned(db, job_id, token)
+            if job.type != "backup.run":
+                raise ValueError("Invalid backup job")
+            job.result = result
+
     async def execution_result(self, job_id, token, result):
         from apps.execution.ports import CHECK_STATES, CHECKS, LIFECYCLE, Outcome, preflight_ready
 
@@ -312,6 +340,11 @@ class JobService:
                     server.last_seen_at = now
 
     def _terminal_audit(self, db, job):
+        if job.type == "backup.run":
+            from apps.backups.service import terminal_audit
+
+            terminal_audit(db, job)
+            return
         if job.status not in ("succeeded", "failed"):
             return
         db.add(
@@ -466,6 +499,12 @@ class JobService:
     ):
         async with transaction(self.engine) as db:
             job, now = await self._owned(db, job_id, token)
+            if (
+                job.type == "backup.run"
+                and code is None
+                and (job.result or {}).get("phase") != "verified"
+            ):
+                code = "backup_unknown"
             if code:
                 self._failure(db, job, now, code, retryable)
             else:
@@ -518,6 +557,8 @@ class JobService:
             job.cancel_requested_at = now
             if job.status == "queued":
                 finish(job, "cancelled", now)
+                if job.type == "backup.run":
+                    self._terminal_audit(db, job)
                 await self._lifecycle_terminal(db, job, now)
             event = record(
                 job, "cancelled" if job.status == "cancelled" else "cancel_requested", now

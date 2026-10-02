@@ -4,6 +4,10 @@ import asyncio
 import logging
 import signal
 
+from apps.backups.config import BackupFailure, protected_config
+from apps.backups.postgres import PostgresTools
+from apps.backups.service import BackupService
+from apps.backups.storage import S3Storage
 from apps.execution.ansible import AnsibleExecutionAdapter
 from apps.execution.jobs import execution_handlers
 from apps.jobs.redis import RedisTransport
@@ -38,13 +42,22 @@ async def run(settings: Settings, stop: asyncio.Event):
             settings.monitoring_timeout,
         )
         alerts = OperationalAlertService(dependencies.engine, metrics)
+        backup_config = None
+        if settings.backup_enabled:
+            try:
+                backup_config = protected_config(settings.backup_config_file or "")
+            except BackupFailure:
+                logger.warning("backup_configuration_unavailable")
+        storage = S3Storage(backup_config) if backup_config else None
+        jobs = JobService(dependencies.engine, transport, transport)
+        backups = BackupService(jobs, enabled=settings.backup_enabled)
 
         async def maintenance():
             await vpn.expire_due()
             await alerts.tick()
 
         worker = Worker(
-            JobService(dependencies.engine, transport, transport),
+            jobs,
             {
                 **HANDLERS,
                 **execution_handlers(
@@ -57,6 +70,7 @@ async def run(settings: Settings, stop: asyncio.Event):
                     ),
                 ),
                 **credential_handlers(port, vpn),
+                "backup.run": backups.handler(backup_config, storage, PostgresTools()),
             },
             maintenance=maintenance,
         )
@@ -83,6 +97,8 @@ async def run(settings: Settings, stop: asyncio.Event):
                 await consumer
             finally:
                 await metrics.close()
+                if storage:
+                    await storage.close()
     logger.info("worker_stopped")
 
 

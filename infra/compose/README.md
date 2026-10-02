@@ -12,6 +12,10 @@ certificates; it replaces the development entrypoint's ports and configuration.
 TTCP-019 adds [durable operational alerts](../../docs/operational-alerts.md) through
 worker maintenance on the private metrics network. Apply migration
 `0012_operational_alerts` and reapply runtime grants before restarting the updated worker/API.
+TTCP-020 adds opt-in `compose.backup.yaml` and maintenance-only `compose.restore.yaml`.
+See [protected backups](../../docs/backups.md) and
+[backup/restore verification](../../docs/runbooks/backup-restore.md). Reader grants
+and key escrow are required; restore secrets are never mounted in API/worker.
 
 ## Запуск
 

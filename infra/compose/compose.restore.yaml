@@ -1,0 +1,12 @@
+# Maintenance only: target credentials are never mounted in API or worker.
+services:
+  backup-maintenance:
+    environment:
+      TTCP_RESTORE_CONFIG_FILE: /run/secrets/restore.json
+    volumes:
+      - type: bind
+        source: ${TTCP_RESTORE_CONFIG_PATH:?Set protected absolute restore target configuration path}
+        target: /run/secrets/restore.json
+        read_only: true
+        bind:
+          create_host_path: false

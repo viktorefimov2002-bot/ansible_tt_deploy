@@ -17,6 +17,7 @@ ADR фиксирует контекст, выбранное решение и е
 
 | ADR | Status |
 | --- | --- |
+| [0023 - Remote logical backups](0023-remote-logical-backups.md) | Proposed; implemented in TTCP-020, provider/container acceptance pending |
 | [0022 — Durable operational alerts](0022-durable-operational-alerts.md) | Proposed; implemented in TTCP-019, live-stack acceptance pending |
 | [0020 — Managed server lifecycle](0020-managed-server-lifecycle.md) | Proposed; implemented in TTCP-017, live-node acceptance pending |
 | [0004 — Ansible execution adapter](0004-ansible-execution-adapter.md) | Proposed; implemented in TTCP-008, owner acceptance pending |

@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from apps.api.auth import clear_admin_cookie, router
 from apps.api.auth_service import AuthService
+from apps.api.backups import router as backups_router
 from apps.api.client import admin_invites, clear_client_cookie
 from apps.api.client import router as client_router
 from apps.api.client_auth_service import ClientAuthService
@@ -17,6 +18,7 @@ from apps.api.monitoring import router as monitoring_router
 from apps.api.servers import router as servers_router
 from apps.api.visibility import router as visibility_router
 from apps.api.vpn import router as vpn_router
+from apps.backups.service import BackupService
 from apps.jobs.redis import RedisTransport
 from apps.jobs.service import JobService
 from apps.monitoring.query import MetricsClient
@@ -45,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.visibility = VisibilityService(dependencies.engine)
             transport = RedisTransport(dependencies.redis)
             app.state.jobs = JobService(dependencies.engine, transport, transport)
+            app.state.backups = BackupService(app.state.jobs, enabled=configured.backup_enabled)
             app.state.servers = ServerService(
                 dependencies.engine,
                 configured.auth_encryption_key.get_secret_value()
@@ -78,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(router)
     app.include_router(jobs_router)
+    app.include_router(backups_router)
     app.include_router(monitoring_router)
     app.include_router(visibility_router)
     app.include_router(servers_router)
@@ -102,6 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (
                     "/api/auth/",
                     "/api/jobs",
+                    "/api/backups",
                     "/api/servers",
                     "/api/vpn-users",
                     "/api/monitoring",
@@ -124,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (
                 "/api/auth",
                 "/api/jobs",
+                "/api/backups",
                 "/api/servers",
                 "/api/vpn-users",
                 "/api/client",

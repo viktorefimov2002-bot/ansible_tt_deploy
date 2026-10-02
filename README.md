@@ -22,6 +22,11 @@ immutable settings and durable apply with automatic rollback (TTCP-018).
 видимость Admin Web (TTCP-016).
 [Durable operational alerts](docs/operational-alerts.md) turn trusted node/service
 and sustained disk/memory observations into PostgreSQL-backed incidents (TTCP-019).
+[Remote backups](docs/backups.md) add encrypted off-host storage and Admin Web history
+(TTCP-020), with [backup/restore](docs/runbooks/backup-restore.md),
+[deployment](docs/runbooks/control-plane-deployment.md),
+[upgrade](docs/runbooks/upgrade-migrations.md) and
+[incident recovery](docs/runbooks/incident-recovery.md) runbooks.
 
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),

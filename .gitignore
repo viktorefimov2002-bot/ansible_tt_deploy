@@ -15,6 +15,9 @@ create-tt-skills.sh
 .env.*
 !.env.example
 *.dump
+*.ttcpbk
+backup.json
+restore.json
 .venv/
 .tools/
 __pycache__/

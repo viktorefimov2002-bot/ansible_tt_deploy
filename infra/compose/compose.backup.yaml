@@ -1,0 +1,42 @@
+# Opt-in protected backup configuration. The host file must be mode 0600,
+# readable by UID 65534 (Windows: restrictive ACL); never put it in the checkout.
+services:
+  api:
+    environment:
+      TTCP_BACKUP_ENABLED: "true"
+  worker:
+    environment:
+      TTCP_BACKUP_ENABLED: "true"
+      TTCP_BACKUP_CONFIG_FILE: /run/secrets/backup.json
+    volumes:
+      - type: bind
+        source: ${TTCP_BACKUP_CONFIG_PATH:?Set protected absolute backup configuration path}
+        target: /run/secrets/backup.json
+        read_only: true
+        bind:
+          create_host_path: false
+    mem_limit: 256m
+  backup-maintenance:
+    profiles: [tools]
+    build:
+      context: ../..
+      dockerfile: apps/Dockerfile
+      target: worker
+    entrypoint: [python, -m, apps.backups]
+    command: [--help]
+    environment:
+      TTCP_BACKUP_CONFIG_FILE: /run/secrets/backup.json
+    volumes:
+      - type: bind
+        source: ${TTCP_BACKUP_CONFIG_PATH:?Set protected absolute backup configuration path}
+        target: /run/secrets/backup.json
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [database, management_egress]
+    mem_limit: 256m

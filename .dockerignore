@@ -25,6 +25,9 @@ apps/**/__pycache__/
 **/*.py[cod]
 **/.env
 **/.env.*
+**/backup.json
+**/restore.json
+**/*.ttcpbk
 apps/client-web/node_modules/
 apps/client-web/dist/
 apps/admin-web/node_modules/
