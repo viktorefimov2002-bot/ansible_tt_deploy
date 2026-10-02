@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from apps.execution.ports import (
     CHECK_STATES,
     CHECKS,
+    LIFECYCLE,
     EventSink,
     ExecutionEvent,
     ExecutionRequest,
@@ -56,6 +57,7 @@ class AnsibleExecutionAdapter:
 
         checks = None
         if request.operation == "server.preflight":
+            assert request.preflight is not None  # Guaranteed by the closed request validator.
             checks = dict.fromkeys(CHECKS, "unknown")
             checks.update(await dns_checks(request.preflight))
             if not request.preflight.acme_http:
@@ -126,6 +128,22 @@ class AnsibleExecutionAdapter:
                 if checks is not None and outcome == Outcome.UNREACHABLE:
                     checks["ssh"] = "fail"
                 configuration = None
+                lifecycle = None
+                report = cwd / "lifecycle.json"
+                if request.operation in LIFECYCLE and outcome == Outcome.SUCCEEDED:
+                    assert request.lifecycle is not None
+                    from apps.execution.lifecycle import validated_result
+
+                    try:
+                        if not report.is_file() or report.stat().st_size > 1024:
+                            raise ValueError
+                        lifecycle = validated_result(
+                            request.operation,
+                            request.lifecycle.model_dump(),
+                            json.loads(report.read_text(encoding="utf-8")),
+                        )
+                    except (ValueError, TypeError, UnicodeError):
+                        return ExecutionResult(Outcome.INVALID)
                 delivery = cwd / "delivery.json"
                 if outcome == Outcome.SUCCEEDED and delivery.exists():
                     if delivery.stat().st_size > 65536:
@@ -140,7 +158,7 @@ class AnsibleExecutionAdapter:
                             raise ValueError
                     except (ValueError, TypeError, UnicodeError):
                         return ExecutionResult(Outcome.INVALID)
-                return ExecutionResult(outcome, code, checks, configuration)
+                return ExecutionResult(outcome, code, checks, configuration, lifecycle)
         except TimeoutError:
             return ExecutionResult(Outcome.TIMED_OUT, checks=checks)
         except OSError:
@@ -206,6 +224,12 @@ class AnsibleExecutionAdapter:
                         if request.credential
                         else None
                     ),
+                    "ttcp_lifecycle_payload": {
+                        "operation": request.operation,
+                        **request.lifecycle.model_dump(exclude_none=True),
+                    }
+                    if request.lifecycle
+                    else None,
                 }
             ),
         )
@@ -241,6 +265,8 @@ class AnsibleExecutionAdapter:
                     if request.operation == "server.preflight"
                     else "managed-credential.yml"
                     if request.operation.startswith("credential.")
+                    else "managed-lifecycle.yml"
+                    if request.operation in LIFECYCLE
                     else "managed-status.yml"
                 )
             ),

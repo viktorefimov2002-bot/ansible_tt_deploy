@@ -115,6 +115,11 @@ class Server(Identity, Updated, Base):
         CheckConstraint("ssh_port BETWEEN 1 AND 65535", name="ssh_port"),
         CheckConstraint("length(trim(name)) > 0", name="name_nonblank"),
         CheckConstraint("length(trim(hostname)) > 0", name="hostname_nonblank"),
+        CheckConstraint(
+            "lifecycle_state IN ('unknown','installed','uninstalled','failed',"
+            "'deploy_pending','update_pending','restart_pending','uninstall_pending')",
+            name="lifecycle_state",
+        ),
         # The selected revision must belong to this server, not just exist.
         ForeignKeyConstraint(
             ["id", "config_revision_id"],
@@ -138,6 +143,9 @@ class Server(Identity, Updated, Base):
     acme_http: Mapped[bool] = mapped_column(server_default=text("true"))
     trusttunnel_version: Mapped[str | None] = mapped_column(String(64))
     desired_trusttunnel_version: Mapped[str | None] = mapped_column(String(64))
+    lifecycle_state: Mapped[str] = mapped_column(String(32), server_default="unknown")
+    lifecycle_job_id: Mapped[UUID | None] = mapped_column(ForeignKey("jobs.id"))
+    preflight_passed_at: Mapped[datetime | None]
     config_revision_id: Mapped[UUID | None]
     last_seen_at: Mapped[datetime | None]
     revisions: Mapped[list["ServerConfigRevision"]] = relationship(
@@ -287,3 +295,4 @@ class Job(Identity, Updated, Base):
     log_sequence: Mapped[int] = mapped_column(server_default=text("0"))
     history: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     result: Mapped[dict | None] = mapped_column(JSONB)
+    parameters: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))

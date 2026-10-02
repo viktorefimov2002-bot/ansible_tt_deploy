@@ -17,6 +17,7 @@ ADR фиксирует контекст, выбранное решение и е
 
 | ADR | Status |
 | --- | --- |
+| [0020 — Managed server lifecycle](0020-managed-server-lifecycle.md) | Proposed; implemented in TTCP-017, live-node acceptance pending |
 | [0004 — Ansible execution adapter](0004-ansible-execution-adapter.md) | Proposed; implemented in TTCP-008, owner acceptance pending |
 | [0012 — Administrative authentication and sessions](0012-admin-auth-sessions.md) | Proposed; implemented in TTCP-006, owner acceptance pending |
 | [0013 — Durable job worker](0013-durable-job-worker.md) | Proposed; implemented in TTCP-007, owner acceptance pending |

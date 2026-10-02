@@ -1,5 +1,8 @@
 # Server management and pre-flight — TTCP-009
 
+TTCP-017 adds [managed workload lifecycle operations](server-lifecycle.md),
+installed/desired versions and workload state independently of reachability.
+
 The task scope is the TTCP-009 implementation request and architecture sections
 7–9, 19, 21–23. SSH trust and rotation are resolved in
 [ADR-0014](adr/0014-server-ssh-trust.md).

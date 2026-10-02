@@ -1,0 +1,22 @@
+---
+- name: Apply typed managed workload lifecycle intent
+  hosts: trusttunnel
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Invoke fixed lifecycle privilege boundary
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/sudo
+          - -n
+          - /usr/local/sbin/ttcp-node-lifecycle
+        stdin: "{{ ttcp_lifecycle_payload | to_json }}"
+      register: lifecycle
+      no_log: true
+    - name: Capture closed lifecycle report
+      ansible.builtin.copy:
+        content: "{{ lifecycle.stdout }}"
+        dest: lifecycle.json
+        mode: "0600"
+      delegate_to: localhost
+      no_log: true

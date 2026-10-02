@@ -82,6 +82,32 @@ CHECKS = (
 )
 CHECK_STATES = ("pass", "fail", "unknown", "skipped")
 
+LIFECYCLE = ("server.deploy", "server.restart", "server.update", "server.uninstall")
+VERSION_PATTERN = r"^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$"
+
+
+class LifecycleParameters(ClosedModel):
+    version: str | None = Field(default=None, pattern=VERSION_PATTERN)
+    domain: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9.-]{0,252}$")
+    acme_http: bool = Field(default=False, strict=True)
+    acme_email: str | None = Field(
+        default=None, max_length=254, pattern=r"^[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+$"
+    )
+
+
+def preflight_ready(checks, acme_http):
+    return (
+        isinstance(checks, dict)
+        and set(checks) == set(CHECKS)
+        and any(checks[name] == "pass" for name in ("dns_a", "dns_aaaa"))
+        and all(
+            value == "pass"
+            or (name in ("dns_aaaa", "dns_a") and value == "skipped")
+            or (name == "tcp_80" and not acme_http and value == "skipped")
+            for name, value in checks.items()
+        )
+    )
+
 
 class ExecutionRequest(ClosedModel):
     operation: Literal[
@@ -90,15 +116,35 @@ class ExecutionRequest(ClosedModel):
         "execution.validate",
         "credential.create",
         "credential.revoke",
+        "server.deploy",
+        "server.restart",
+        "server.update",
+        "server.uninstall",
     ]
     target: Target | None = Field(default=None, repr=False, exclude=True)
     parameters: StatusParameters = Field(default_factory=StatusParameters)
     preflight: PreflightParameters | None = None
     credential: CredentialParameters | None = Field(default=None, repr=False, exclude=True)
-    timeout_seconds: int = Field(default=45, strict=True, ge=1, le=45)
+    lifecycle: LifecycleParameters | None = None
+    timeout_seconds: int = Field(default=45, strict=True, ge=1, le=600)
 
     @model_validator(mode="after")
     def selected_target(self):
+        if self.operation not in LIFECYCLE and self.timeout_seconds > 45:
+            raise ValueError("Only lifecycle operations admit extended deadlines")
+        if self.operation in LIFECYCLE:
+            p = self.lifecycle
+            if p is None or (self.operation in ("server.deploy", "server.update")) != (
+                p.version is not None
+            ):
+                raise ValueError("Lifecycle version is operation-specific")
+            if self.operation == "server.deploy":
+                if not p.domain or (p.acme_http and not p.acme_email):
+                    raise ValueError("Deployment requires domain and ACME contact when applicable")
+            elif p.domain is not None or p.acme_email is not None or p.acme_http:
+                raise ValueError("Deployment parameters are operation-specific")
+        elif self.lifecycle is not None:
+            raise ValueError("Lifecycle parameters are operation-specific")
         if (self.operation != "execution.validate") != (self.target is not None):
             raise ValueError("Operation requires an explicit, appropriate target")
         if (self.operation == "server.preflight") != (self.preflight is not None):
@@ -137,6 +183,7 @@ class ExecutionResult:
     exit_code: int | None = None
     checks: dict[str, str] | None = None
     configuration: dict[str, str] | None = field(default=None, repr=False)
+    lifecycle: dict | None = None
 
 
 EventSink = Callable[[ExecutionEvent], Awaitable[None]]

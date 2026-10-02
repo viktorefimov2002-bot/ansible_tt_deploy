@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements-execution.lock \
 COPY automation/ansible/status.yml ./automation/ansible/status.yml
 COPY automation/ansible/managed-status.yml ./automation/ansible/managed-status.yml
 COPY automation/ansible/managed-credential.yml ./automation/ansible/managed-credential.yml
+COPY automation/ansible/managed-lifecycle.yml ./automation/ansible/managed-lifecycle.yml
 COPY automation/ansible/preflight.yml ./automation/ansible/preflight.yml
 COPY automation/ansible/group_vars/all.yml ./automation/ansible/group_vars/all.yml
 USER 65534:65534

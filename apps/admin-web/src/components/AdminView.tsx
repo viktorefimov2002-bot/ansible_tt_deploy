@@ -8,6 +8,7 @@ import { UserDetails, UserForm } from "./UserDetails";
 import { AuditView } from "./AuditView";
 import { NotificationsView } from "./NotificationsView";
 import { MonitoringView } from "./MonitoringView";
+import { ServerLifecycle } from "./ServerLifecycle";
 
 const pages: Page[] = [
   "Dashboard",
@@ -291,6 +292,7 @@ export function AdminView({ admin }: { admin: AdminState }) {
                       : "Never"}
                   </dd>
                 </dl>
+                <ServerLifecycle node={node} admin={admin} />
                 {writable && (
                   <>
                     <div className="actions">

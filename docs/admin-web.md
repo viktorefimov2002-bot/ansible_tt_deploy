@@ -1,5 +1,8 @@
 # TTCP-015 — Admin Web core
 
+TTCP-017 adds server workload lifecycle controls and version/state/job links.
+See [managed lifecycle](server-lifecycle.md) for requirements and recovery.
+
 TTCP-016 adds [Monitoring, Audit and Notifications](admin-visibility.md), with
 authenticated backend summaries, filtered pagination and durable per-admin read state.
 

@@ -19,9 +19,17 @@ SSH = "/etc/ssh/sshd_config.d/00-ttcp.conf"
 SUDO = "/etc/sudoers.d/ttcp"
 HELPER = "/usr/local/sbin/ttcp-node-status"
 CREDENTIAL_HELPER = "/usr/local/sbin/ttcp-node-credential"
+LIFECYCLE_HELPER = "/usr/local/sbin/ttcp-node-lifecycle"
 EXPORTER = "/etc/systemd/system/prometheus-node-exporter.service.d/ttcp.conf"
 DEFAULTS = "/etc/default/prometheus-node-exporter"
-PACKAGES = ("python3", "sudo", "prometheus-node-exporter")
+PACKAGES = (
+    "python3",
+    "python3-jinja2",
+    "sudo",
+    "prometheus-node-exporter",
+    "certbot",
+    "ca-certificates",
+)
 OWNER = "TTCP managed node v1\n"
 STATUS = """#!/bin/sh
 set -eu
@@ -52,6 +60,7 @@ fi
 SUDOERS = f"""Defaults:{USER} env_reset, !setenv
 {USER} ALL=(root) NOPASSWD: {HELPER} ""
 {USER} ALL=(root) NOPASSWD: {CREDENTIAL_HELPER} ""
+{USER} ALL=(root) NOPASSWD: {LIFECYCLE_HELPER} ""
 """
 SSHD = f"""# Owned by TTCP bootstrap; provider access policy is unchanged.
 Match User {USER}
@@ -196,7 +205,7 @@ class Node:
                 or self.path(HOME).exists()
                 or any(
                     self.path(p).exists()
-                    for p in (KEY, SSH, SUDO, HELPER, CREDENTIAL_HELPER, EXPORTER)
+                    for p in (KEY, SSH, SUDO, HELPER, CREDENTIAL_HELPER, LIFECYCLE_HELPER, EXPORTER)
                 )
             ):
                 raise BootstrapError("refusing to adopt existing account or configuration")
@@ -221,8 +230,24 @@ class Node:
             credential_source = (
                 Path(__file__).with_name("node_credential.py").read_text(encoding="utf-8")
             )
+            lifecycle_source = (
+                Path(__file__).with_name("node_lifecycle.py").read_text(encoding="utf-8")
+            )
+            templates = (
+                Path(__file__).resolve().parents[1]
+                / "automation/ansible/roles/trusttunnel_endpoint/templates"
+            )
+            lifecycle_templates = {
+                name: (templates / name).read_text(encoding="utf-8")
+                for name in (
+                    "vpn.toml.j2",
+                    "hosts.toml.j2",
+                    "rules.toml.j2",
+                    "trusttunnel.service.j2",
+                )
+            }
         except OSError:
-            raise BootstrapError("credential helper source missing") from None
+            raise BootstrapError("required helper or lifecycle template source missing") from None
         exists = self.validate(key)  # All admission checks precede mutation.
         self.write(MARKER, OWNER, 0o600)  # Allows recovery after a partial user creation.
         if not exists:
@@ -248,6 +273,9 @@ class Node:
         self.run("/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *PACKAGES)
         self.write(HELPER, STATUS, 0o755)
         self.write(CREDENTIAL_HELPER, credential_source, 0o755)
+        self.write(LIFECYCLE_HELPER, lifecycle_source, 0o755)
+        for name, template in lifecycle_templates.items():
+            self.write(STATE + "/lifecycle-templates/" + name, template)
         # Validate the exact prospective rule before installing it.
         self.write(STATE + "/sudoers.check", SUDOERS, 0o600)
         try:

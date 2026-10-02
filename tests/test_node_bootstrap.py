@@ -158,6 +158,9 @@ def test_configuration_and_repeat_run(node, key):
     assert node.modes[bootstrap.HELPER] == 0o755
     rule = node.path(bootstrap.SUDO).read_text()
     assert f'{bootstrap.HELPER} ""' in rule
+    assert f'{bootstrap.LIFECYCLE_HELPER} ""' in rule
+    assert node.modes[bootstrap.LIFECYCLE_HELPER] == 0o755
+    assert "#!/usr/bin/python3 -I" in node.path(bootstrap.LIFECYCLE_HELPER).read_text()
     assert "NOPASSWD: ALL" not in rule and "/bin/sh" not in rule
     assert key not in repr(node.commands)
     assert "127.0.0.1:9100" in node.path(bootstrap.EXPORTER).read_text()

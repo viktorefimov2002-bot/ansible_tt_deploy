@@ -385,6 +385,14 @@ class VpnService:
             if not device.enabled:
                 raise VpnError(409, "Device revoked")
             server = await self._accessible(db, user, server_id)
+            server = await db.get(Server, server_id, with_for_update=True, populate_existing=True)
+            if (
+                server.lifecycle_state.endswith("_pending")
+                or server.lifecycle_state == "uninstalled"
+            ):
+                raise VpnError(
+                    409, "Server workload is unavailable or has an active lifecycle operation"
+                )
             if not server.ssh_host_key or not server.ssh_private_ciphertext:
                 raise VpnError(409, "Server management unavailable")
             credential = await db.scalar(

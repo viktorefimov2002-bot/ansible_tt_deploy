@@ -6,6 +6,7 @@ import type {
   Device,
   Invitation,
   Job,
+  LifecycleAction,
   LogEvent,
   Page,
   Principal,
@@ -343,6 +344,17 @@ export function useAdmin() {
     }, "Invitation created. Share the link privately; it is shown only once.");
   };
   const actions = {
+    lifecycle: (
+      id: string,
+      kind: LifecycleAction,
+      version?: string,
+      email?: string,
+    ) =>
+      act(async (client) => {
+        const operation = await client.lifecycle(id, kind, version, email);
+        navigate("Jobs");
+        selectJob(operation.id);
+      }, "Lifecycle operation queued. Follow its progress and result here."),
     saveServer: (
       body: ServerInput,
       id?: string,

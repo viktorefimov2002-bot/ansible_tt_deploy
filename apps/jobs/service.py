@@ -256,7 +256,7 @@ class JobService:
                 raise CancellationRequested
 
     async def execution_result(self, job_id, token, result):
-        from apps.execution.ports import CHECK_STATES, CHECKS, Outcome
+        from apps.execution.ports import CHECK_STATES, CHECKS, LIFECYCLE, Outcome, preflight_ready
 
         outcome = Outcome(result.outcome)
         checks = result.checks
@@ -270,6 +270,14 @@ class JobService:
             if job.cancel_requested_at:
                 raise CancellationRequested
             job.result = {"outcome": outcome.value, "attempt": job.attempts}
+            if job.type in LIFECYCLE:
+                from apps.execution.lifecycle import validated_result
+
+                if outcome == Outcome.SUCCEEDED:
+                    job.result["lifecycle"] = validated_result(
+                        job.type, job.parameters, result.lifecycle
+                    )
+                return  # Workload state commits with terminal job completion below.
             if checks is not None:
                 job.result = job.result | {
                     "checks": checks,
@@ -277,6 +285,12 @@ class JobService:
                 }
             server = await db.get(Server, job.target_id)
             if server is not None:
+                if job.type == "server.preflight":
+                    ready = outcome == Outcome.SUCCEEDED and preflight_ready(
+                        checks, server.acme_http
+                    )
+                    job.result["ready"] = ready
+                    server.preflight_passed_at = now if ready else None
                 reachable = checks.get("ssh") == "pass" if checks else outcome == Outcome.SUCCEEDED
                 server.status = "reachable" if reachable else "unknown"
                 if reachable:
@@ -293,6 +307,49 @@ class JobService:
                 target_id=job.id,
                 request_id=job.request_id,
                 result="success" if job.status == "succeeded" else "failure",
+            )
+        )
+
+    async def _lifecycle_terminal(self, db, job, now):
+        from apps.execution.ports import LIFECYCLE
+
+        if job.type not in LIFECYCLE or job.status not in TERMINAL:
+            return
+        server = await db.scalar(select(Server).where(Server.id == job.target_id).with_for_update())
+        if server is None or server.lifecycle_job_id != job.id:
+            return
+        if job.status == "succeeded":
+            from apps.execution.lifecycle import validated_result
+
+            report = validated_result(job.type, job.parameters, (job.result or {}).get("lifecycle"))
+            server.trusttunnel_version = report["installed_version"]
+            server.lifecycle_state = "installed" if server.trusttunnel_version else "uninstalled"
+            server.last_seen_at = now
+            server.status = "reachable"
+            if job.type == "server.uninstall":
+                server.desired_trusttunnel_version = None
+            if job.type in ("server.deploy", "server.uninstall"):
+                server.preflight_passed_at = None
+        elif job.status == "cancelled" and job.attempts == 0:
+            server.lifecycle_state = "installed" if server.trusttunnel_version else "unknown"
+            server.desired_trusttunnel_version = server.trusttunnel_version
+        else:
+            server.lifecycle_state = (
+                "unknown"
+                if job.error_code
+                in ("unsafe_outcome", "worker_lost", "timeout", "shutdown", "execution_timeout")
+                or job.status == "cancelled"
+                else "failed"
+            )
+        db.add(
+            AuditEvent(
+                actor_type="system",
+                action=job.type + "." + job.status,
+                target_type="server",
+                target_id=server.id,
+                request_id=job.request_id,
+                result="success" if job.status == "succeeded" else "failure",
+                details={"job_id": str(job.id)},
             )
         )
 
@@ -329,6 +386,7 @@ class JobService:
                 record(job, job.status, now)
                 self._terminal_audit(db, job)
             events = job.history[-2:]
+            await self._lifecycle_terminal(db, job, now)
         for event in events:
             await self.publish(job_id, event)
 
@@ -354,6 +412,7 @@ class JobService:
                     retryable,
                     acknowledge_cancel=False,
                 )
+                await self._lifecycle_terminal(db, job, now)
         # No publish required for recovery: the API repairs the durable stream.
 
     async def cancel(self, job_id: UUID, actor: UUID, request_id: str) -> Job | None:
@@ -369,6 +428,7 @@ class JobService:
             job.cancel_requested_at = now
             if job.status == "queued":
                 finish(job, "cancelled", now)
+                await self._lifecycle_terminal(db, job, now)
             event = record(
                 job, "cancelled" if job.status == "cancelled" else "cancel_requested", now
             )

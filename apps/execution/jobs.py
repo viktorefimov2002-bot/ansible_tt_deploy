@@ -4,13 +4,15 @@ import asyncio
 from typing import Protocol
 from uuid import UUID
 
-from apps.execution.ports import ExecutionPort, ExecutionRequest, Outcome
+from apps.execution.ports import LIFECYCLE, ExecutionPort, ExecutionRequest, Outcome
 from apps.jobs.service import LostClaim
-from apps.jobs.worker import Context, ExecutionFailure, Handler
+from apps.jobs.worker import Context, ExecutionFailure, Handler, RetryableError
 
 
 class RequestResolver(Protocol):
-    async def resolve(self, target_id: UUID, operation: str = "server.status") -> ExecutionRequest:
+    async def resolve(
+        self, target_id: UUID, operation: str = "server.status", parameters: dict | None = None
+    ) -> ExecutionRequest:
         """Load authorized durable intent and ephemeral secrets; never from job metadata."""
         ...
 
@@ -28,7 +30,7 @@ def execution_handlers(
                 raise ExecutionFailure("execution_invalid")
             request = ExecutionRequest(operation="execution.validate")
         elif (
-            job.type in ("server.status", "server.preflight")
+            job.type in ("server.status", "server.preflight", *LIFECYCLE)
             and job.target_type == "server"
             and job.target_id is not None
             and resolver is not None
@@ -36,6 +38,8 @@ def execution_handlers(
             request = (
                 await resolver.resolve(job.target_id)
                 if job.type == "server.status"
+                else await resolver.resolve(job.target_id, job.type, job.parameters)
+                if job.type in LIFECYCLE
                 else await resolver.resolve(job.target_id, job.type)
             )
             if request.operation != job.type:
@@ -67,7 +71,20 @@ def execution_handlers(
                 # report instead of turning prerequisite failures into worker failures.
                 return
             if result.outcome != Outcome.SUCCEEDED:
+                if job.type in (
+                    "server.deploy",
+                    "server.update",
+                    "server.uninstall",
+                ) and result.outcome in (
+                    Outcome.UNREACHABLE,
+                    Outcome.TIMED_OUT,
+                    Outcome.UNAVAILABLE,
+                    Outcome.FAILED,
+                ):
+                    raise RetryableError
                 raise ExecutionFailure(result.outcome.value)
+            if job.type in LIFECYCLE and result.lifecycle is None:
+                raise ExecutionFailure("execution_invalid")
         finally:
             active.cancel()
             watcher.cancel()
@@ -75,7 +92,14 @@ def execution_handlers(
 
     handlers = {"internal.execution.validate": Handler(execute, replay_safe=True, cancellable=True)}
     if resolver is not None:
-        # Read-only status is safe to interrupt/replay. Mutations are not admitted.
+        # Diagnostics can be interrupted; workload mutations must finish/reconcile.
         handlers["server.status"] = Handler(execute, replay_safe=True, cancellable=True)
         handlers["server.preflight"] = Handler(execute, replay_safe=True, cancellable=True)
+        for operation in LIFECYCLE:
+            handlers[operation] = Handler(
+                execute,
+                replay_safe=operation != "server.restart",
+                cancellable=False,
+                timeout_seconds=620,
+            )
     return handlers

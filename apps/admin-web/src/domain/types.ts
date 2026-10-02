@@ -30,7 +30,13 @@ export interface Server extends ServerInput {
   last_seen_at: string | null;
   ssh_configured: boolean;
   host_key_fingerprint: string | null;
+  lifecycle_state: string;
+  lifecycle_job_id: string | null;
+  preflight_passed_at: string | null;
+  trusttunnel_version: string | null;
+  desired_trusttunnel_version: string | null;
 }
+export type LifecycleAction = "deploy" | "update" | "restart" | "uninstall";
 export interface UserInput {
   display_name: string;
   device_limit: number;

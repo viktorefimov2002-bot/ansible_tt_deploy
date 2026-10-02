@@ -17,7 +17,7 @@ from pathlib import Path
 
 DIRECTORY = Path("/opt/trusttunnel")
 CREDENTIALS = DIRECTORY / "credentials.toml"
-LOCK = Path("/run/lock/ttcp-credential.lock")
+LOCK = Path("/run/lock/ttcp-workload.lock")
 USERNAME = re.compile(r"ttcp_[a-f0-9]{32}\Z")
 ENTRY = re.compile(
     r"\s*\[\[client\]\]\s*\nusername\s*=\s*(\"(?:[^\"\\]|\\.)*\")\s*\n"
@@ -166,7 +166,7 @@ def main():
             or lock_info.st_mode & 0o022
         ):
             raise Rejected
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         old = CREDENTIALS.read_text(encoding="utf-8")
         entries = parse(old)
         if operation == "credential.create":

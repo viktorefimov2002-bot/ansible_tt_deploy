@@ -33,6 +33,7 @@ class Handler:
     execute: Callable[[Context], Awaitable[None]]
     replay_safe: bool = False
     cancellable: bool = False
+    timeout_seconds: float | None = None
 
 
 async def noop(context: Context):
@@ -58,7 +59,12 @@ class Worker:
         self.maintenance = maintenance
 
     async def execute(self, job_id: UUID):
-        job = await self.service.claim(job_id, lease_seconds=self.timeout + 30)
+        pending = await self.service.get(job_id)
+        selected = self.handlers.get(pending.type) if pending else None
+        timeout = (
+            selected.timeout_seconds if selected and selected.timeout_seconds else self.timeout
+        )
+        job = await self.service.claim(job_id, lease_seconds=timeout + 30)
         if job is None:
             return
         token = job.claim_token
@@ -73,7 +79,7 @@ class Worker:
             ):
                 code = "unknown_handler"
             else:
-                async with asyncio.timeout(self.timeout):
+                async with asyncio.timeout(timeout):
                     await handler.execute(Context(self.service, job.id, token, job.attempts))
         except CancellationRequested:
             pass  # complete() observes the persisted request under its row lock.

@@ -1,5 +1,11 @@
 # Execution adapter — TTCP-008
 
+TTCP-017 extends the closed operation set with deploy/restart/update/uninstall.
+Its mutation deadlines, replay/cancellation policies and node privilege boundary
+are documented in [server lifecycle](server-lifecycle.md) and
+[ADR-0020](adr/0020-managed-server-lifecycle.md). Historical scope below remains
+the record of the original read-only foundation.
+
 TTCP-009 extends this foundation with server resolution, encrypted management keys
 and a separate structured pre-flight callback. See [server management](servers.md)
 and [SSH trust decision](adr/0014-server-ssh-trust.md). The historical TTCP-008 scope

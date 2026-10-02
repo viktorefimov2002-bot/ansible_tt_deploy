@@ -4,9 +4,52 @@ from fastapi import APIRouter, Query, Request
 
 from apps.api.auth import Administrator, Authenticated
 from apps.api.jobs import representation
-from apps.servers.schemas import CreateServer, Credentials, Enabled, JobInput, ServerInput
+from apps.servers.schemas import (
+    CreateServer,
+    Credentials,
+    DeployWorkload,
+    Enabled,
+    JobInput,
+    ServerInput,
+    UpdateWorkload,
+)
 
 router = APIRouter(prefix="/api/servers")
+
+
+async def lifecycle(server_id, body, request, principal, operation):
+    return representation(
+        await request.app.state.servers.enqueue(
+            server_id,
+            operation,
+            body.idempotency_key,
+            principal.admin_id,
+            request.state.request_id,
+            body.model_dump(exclude={"idempotency_key"}, exclude_none=True),
+        )
+    )
+
+
+@router.post("/{server_id}/deploy", status_code=202)
+async def deploy(server_id: UUID, body: DeployWorkload, request: Request, principal: Administrator):
+    return await lifecycle(server_id, body, request, principal, "server.deploy")
+
+
+@router.post("/{server_id}/update", status_code=202)
+async def update_workload(
+    server_id: UUID, body: UpdateWorkload, request: Request, principal: Administrator
+):
+    return await lifecycle(server_id, body, request, principal, "server.update")
+
+
+@router.post("/{server_id}/restart", status_code=202)
+async def restart(server_id: UUID, body: JobInput, request: Request, principal: Administrator):
+    return await lifecycle(server_id, body, request, principal, "server.restart")
+
+
+@router.post("/{server_id}/uninstall", status_code=202)
+async def uninstall(server_id: UUID, body: JobInput, request: Request, principal: Administrator):
+    return await lifecycle(server_id, body, request, principal, "server.uninstall")
 
 
 @router.get("")

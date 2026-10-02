@@ -5,6 +5,7 @@ import type {
   Device,
   Invitation,
   Job,
+  LifecycleAction,
   LogEvent,
   ListPage,
   Monitoring,
@@ -109,6 +110,17 @@ export class AdminApi {
   diagnostic = (id: string, kind: "preflight" | "status") =>
     this.request<Job>(`/servers/${id}/${kind}`, "POST", {
       idempotency_key: crypto.randomUUID(),
+    });
+  lifecycle = (
+    id: string,
+    kind: LifecycleAction,
+    version?: string,
+    acme_email?: string,
+  ) =>
+    this.request<Job>(`/servers/${id}/${kind}`, "POST", {
+      idempotency_key: crypto.randomUUID(),
+      ...(version ? { version } : {}),
+      ...(acme_email ? { acme_email } : {}),
     });
   users = () => this.request<VpnUser[]>("/vpn-users");
   createUser = (body: UserInput) =>

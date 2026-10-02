@@ -4,10 +4,10 @@ import re
 from cryptography.hazmat.primitives.serialization import load_ssh_private_key, load_ssh_public_key
 from pydantic import Field, SecretStr, field_validator
 
-from apps.execution.ports import ClosedModel
+from apps.execution.ports import VERSION_PATTERN, ClosedModel
 
 
-def hostname(value: str) -> str:
+def normalize_hostname(value: str) -> str:
     value = value.lower().rstrip(".")
     if "%" in value:
         raise ValueError("Scoped addresses are not supported")
@@ -32,7 +32,7 @@ class ServerInput(ClosedModel):
     ssh_port: int = Field(default=22, strict=True, ge=1, le=65535)
     acme_http: bool = Field(default=True, strict=True)
 
-    _host = field_validator("hostname", "domain")(hostname)
+    _host = field_validator("hostname", "domain")(normalize_hostname)
 
     @field_validator("domain")
     @classmethod
@@ -93,3 +93,13 @@ class Enabled(ClosedModel):
 
 class JobInput(ClosedModel):
     idempotency_key: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class UpdateWorkload(JobInput):
+    version: str = Field(pattern=VERSION_PATTERN)
+
+
+class DeployWorkload(UpdateWorkload):
+    acme_email: str | None = Field(
+        default=None, max_length=254, pattern=r"^[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+$"
+    )
