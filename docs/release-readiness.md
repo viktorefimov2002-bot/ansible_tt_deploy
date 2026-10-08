@@ -11,6 +11,9 @@ dispatch, on disposable Ubuntu 24.04 runners. It has read-only repository permis
 does not retain checkout credentials, and has no deployment, publication or SSH step.
 Configure repository branch protection to require all four jobs after owner approval.
 
+The Linux publication fix and exact-SHA next-push acceptance procedure are in
+[CI networking recovery](ci-networking.md).
+
 | Gate | Evidence required |
 | --- | --- |
 | Python/integration | Locked dependencies; Ruff lint/format; mypy across all `apps`; full Python suite with real PostgreSQL, Redis and NGINX; actual Ansible/process tests on Linux. |
@@ -23,7 +26,9 @@ Configure repository branch protection to require all four jobs after owner appr
 | Browser E2E | Admin MFA login; server/user creation; invitation; client login; device quota; durable credential request across broker/worker restart; TOML/deep-link/QR delivery; revoke and delivery denial; viewer mutation and cross-origin rejection. |
 
 Run from the repository root on Linux with Python 3.12, Node 24.11.1, pnpm 11.19.0,
-local Docker Engine/Compose 2.24.4+ and NGINX installed (stop any system NGINX first):
+local Docker Engine 28+/Compose 2.24.4+, Docker's iptables backend, iproute2 and NGINX installed
+(stop any system NGINX first). Network setup requires root or passwordless `sudo -n`
+for narrowly scoped iptables rules; missing permissions/backend fail the gate:
 
 Map `admin.localhost` and `vpn.localhost` to `127.0.0.1` in the local hosts file;
 CI does this explicitly because Node HTTP requests also need those aliases.
@@ -33,6 +38,7 @@ python -m pip install -r requirements-control-plane-dev.lock -r requirements-exe
 python -m ruff check apps tests migrations scripts/ci
 python -m ruff format --check apps tests migrations scripts/ci
 python -m mypy
+python scripts/ci/network_smoke.py
 python scripts/ci/python_validation.py
 python scripts/ci/compose_validation.py
 bash infra/compose/tests/runtime_smoke.sh
@@ -51,7 +57,7 @@ bash scripts/ci/run_e2e.sh
 ```
 
 The Python runner creates its own random `ttcp_ci_<random>` database, authenticated
-Redis, loopback ports and internal Docker network. PostgreSQL 17 client wrappers use
+Redis, loopback ports and an egress-blocked task-owned Docker bridge. PostgreSQL 17 client wrappers use
 the tools in that exact disposable server image; only ciphertext files leave the dump
 pipeline. The required backup harness creates a second disposable MinIO/mc project
 with a temporary CA and random keys. Both runners clean up their own containers and
@@ -68,8 +74,9 @@ used as evidence that the release gates passed.
 E2E uses the production TLS NGINX policy, both compiled applications, real API and
 durable worker services. Only managed-node execution is replaced by a closed test
 adapter accepting one `.invalid` target. It never opens SSH or runs a node helper.
-All runtime E2E networks are internal, browser egress is restricted to the two test
-origins, and only loopback HTTPS is published. This establishes the control-plane
+E2E backend services stay on an internal network; NGINX alone also joins the guarded
+host-access bridge. Browser egress is restricted to the two test origins, and only
+loopback HTTPS is published. This establishes the control-plane
 journey; it does not establish VPN connectivity or installation on a real node.
 
 No browser trace, video, screenshot or generated configuration is uploaded. Test
@@ -94,8 +101,9 @@ validation-only task; existing Proposed ADR acceptance remains an owner decision
 Independent review found that directly launching the backup drill could inherit a
 remote Docker context. The harness now explicitly uses the local Unix socket, clears
 Docker/Compose/MinIO overrides and supplies a fresh blank Compose environment file.
-The final review found no remaining actionable defect in this change; this is source
-inspection plus the local evidence below, not certification of the unrun Linux gates.
+The initial review was source inspection plus the local evidence below. The first
+Linux workflow subsequently exposed a publication defect, recorded and corrected
+below; neither source review nor Windows checks certify the Linux gates.
 
 Release sign-off is **pending** until a complete Linux workflow run and the separate
 [staging/live acceptance record](runbooks/staging-live-acceptance.md) are available.
@@ -128,7 +136,9 @@ are implementation-host helpers; the supported reproducible harness is under
 ## Known gaps and release conditions
 
 - Full Linux Docker/MinIO/browser gates were not executed on the implementation host:
-  it has no Docker Engine or WSL distribution. A green mandatory workflow is required.
+  the October 2 host had no Docker Engine/WSL distribution; the October 8 local Ubuntu
+  WSL runtime has Docker 24.0.2, below the guarded fixture's Docker 28+ requirement.
+  A green mandatory workflow on the exact reviewed commit is required.
 - CI cannot certify managed-node bootstrap/deploy/update/rollback, real VPN traffic,
   exporter scraping/live alerts, public DNS/TLS renewal or a real S3 provider. The
   separate checklist requires evidence and restoration/recovery, not just screenshots.

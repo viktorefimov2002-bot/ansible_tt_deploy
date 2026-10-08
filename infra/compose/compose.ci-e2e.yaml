@@ -1,4 +1,4 @@
-# Standalone topology: no production .env, managed-node adapter, egress network or ports.
+# Standalone topology: private backend network + guarded loopback host ingress.
 name: ttcp-ci-e2e
 
 x-environment: &environment
@@ -100,7 +100,9 @@ services:
       - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${CI_E2E_TLS_DIR:?CI runner must create disposable TLS directory}:/etc/nginx/tls:ro
-    networks: [isolated]
+    networks: [isolated, host_ingress]
+    # Keep Docker's embedded service resolver; external queries fail locally.
+    dns: [127.0.0.1]
     depends_on:
       api:
         condition: service_healthy
@@ -113,3 +115,8 @@ services:
 networks:
   isolated:
     internal: true
+  # Created and firewalled by run_e2e.sh before any runtime container starts.
+  # Only NGINX attaches; Docker internal networks do not publish usable host ports.
+  host_ingress:
+    external: true
+    name: ${TTCP_CI_E2E_NETWORK:?CI runner must create guarded host ingress}

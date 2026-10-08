@@ -412,7 +412,13 @@ test("release journey, durable recovery and separate Admin/Client security bound
         ),
       ).toBe(true);
     }
+    const clientLogout = client.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/client/logout" &&
+        response.request().method() === "POST",
+    );
     await client.getByRole("button", { name: "Выйти", exact: true }).click();
+    expect((await clientLogout).status()).toBe(204);
     await client.reload();
     await expect(
       client.getByRole("heading", { name: "Вход по приглашению", exact: true }),
@@ -449,7 +455,13 @@ test("release journey, durable recovery and separate Admin/Client security bound
     } finally {
       await viewerContext.close();
     }
+    const adminLogout = admin.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/logout" &&
+        response.request().method() === "POST",
+    );
     await admin.getByRole("button", { name: "Sign out", exact: true }).click();
+    expect((await adminLogout).status()).toBe(204);
     await admin.reload();
     await expect(
       admin.getByRole("heading", { name: "Sign in", exact: true }),

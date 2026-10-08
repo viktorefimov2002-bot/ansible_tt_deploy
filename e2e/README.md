@@ -29,8 +29,15 @@ denials. While provisioning, it stops the worker, restarts Redis to lose ephemer
 queue state, restarts the worker, and waits for PostgreSQL intent to recover.
 
 All infrastructure uses a unique Compose project, generated synthetic identities,
-an internal Docker network and PostgreSQL/Redis tmpfs. Only the HTTPS edge is
-published, on loopback. The runner clears inherited deployment/Compose/Docker
+an internal backend network and PostgreSQL/Redis tmpfs. NGINX alone also joins a
+dedicated host-ingress bridge, which the runner creates and firewalls before
+starting services. The firewall blocks new container connections outside that
+bridge and to the host, permits established replies, and disables masquerading
+and IPv6. Only the HTTPS edge is published, on loopback. This requires Linux
+iptables and permission to install/remove rules on the dedicated test bridge.
+The runner verifies both published HTTPS origins with the generated certificates,
+actual SNI/Host names and static/API isolation checks before launching Chromium.
+The runner clears inherited deployment/Compose/Docker
 environment settings, uses an explicit local Docker socket and a generated env
 file, and removes only its own containers and temporary fixture. Browser network
 requests are restricted to the two local origins. Traces, videos, screenshots

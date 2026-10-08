@@ -1,7 +1,9 @@
 """Run Linux integration gates against newly created, loopback-only containers."""
 
+import asyncio
 import os
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -9,6 +11,48 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from scripts.ci.networking import PublishedNetwork, published_port, wait_tcp  # noqa: E402
+
+
+async def verify_dependencies(env):
+    import asyncpg
+    from redis.asyncio import Redis
+
+    connection = None
+    try:
+        connection = await asyncpg.connect(
+            host="127.0.0.1",
+            port=int(env["TTCP_POSTGRES_PORT"]),
+            database=env["TTCP_POSTGRES_DB"],
+            user=env["TTCP_POSTGRES_USER"],
+            password=env["TTCP_POSTGRES_PASSWORD"],
+            timeout=5,
+            command_timeout=5,
+            ssl=False,
+        )
+        if await connection.fetchval("SELECT 1") != 1:
+            raise RuntimeError
+    except Exception:
+        raise RuntimeError("Published PostgreSQL failed authenticated readiness") from None
+    finally:
+        if connection:
+            await connection.close(timeout=5)
+    redis = Redis(
+        host="127.0.0.1",
+        port=int(env["TTCP_REDIS_PORT"]),
+        password=env["TTCP_REDIS_PASSWORD"],
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    )
+    try:
+        if not await redis.ping():
+            raise RuntimeError
+    except Exception:
+        raise RuntimeError("Published Redis failed authenticated readiness") from None
+    finally:
+        await redis.aclose()
 
 
 def main():
@@ -27,7 +71,11 @@ def main():
 
     def docker(*args, check=True):
         result = subprocess.run(
-            ["docker", *args], env=env, capture_output=True, text=True, check=False
+            ["docker", "--host", "unix:///var/run/docker.sock", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if check and result.returncode:
             # Docker errors can include environment values; retain only the operation.
@@ -35,8 +83,11 @@ def main():
         return result
 
     (ROOT / ".tools").mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ci-python-", dir=ROOT / ".tools") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="ci-python-", dir=ROOT / ".tools", delete=False
+    ) as directory:
         work = Path(directory)
+        publication = PublishedNetwork(network, work / "network.json")
         pg_password, redis_password = secrets.token_hex(32), secrets.token_hex(32)
         pg_env, redis_env = work / "postgres.env", work / "redis.env"
         pg_env.write_text(
@@ -46,7 +97,7 @@ def main():
         pg_env.chmod(0o600)
         redis_env.chmod(0o600)
         try:
-            docker("network", "create", "--internal", network)
+            publication.create()
             docker(
                 "run",
                 "-d",
@@ -54,6 +105,8 @@ def main():
                 postgres,
                 "--network",
                 network,
+                "--dns",
+                "127.0.0.1",
                 "--env-file",
                 str(pg_env),
                 "-p",
@@ -69,6 +122,8 @@ def main():
                 redis,
                 "--network",
                 network,
+                "--dns",
+                "127.0.0.1",
                 "--env-file",
                 str(redis_env),
                 "-p",
@@ -99,10 +154,12 @@ def main():
                     raise RuntimeError("Disposable service did not become ready")
 
             def port(container, internal):
-                value = docker("port", container, internal).stdout.strip()
-                if not value.startswith("127.0.0.1:") or "\n" in value:
-                    raise RuntimeError("Disposable port must be loopback only")
-                return value.rsplit(":", 1)[1]
+                result = docker("port", container, internal, check=False)
+                if result.returncode:
+                    raise RuntimeError(
+                        "Docker has no published loopback binding; container health is insufficient"
+                    )
+                return str(published_port(result.stdout))
 
             # Use the exact PostgreSQL 17 tools shipped in the disposable server.
             # Forward secrets as environment, never command arguments or plaintext files.
@@ -133,6 +190,10 @@ def main():
                 TTCP_TEST_REDIS_CONTAINER=redis,
                 PATH=str(bin_dir) + os.pathsep + env["PATH"],
             )
+            wait_tcp(int(env["TTCP_POSTGRES_PORT"]), "PostgreSQL")
+            wait_tcp(int(env["TTCP_REDIS_PORT"]), "Redis")
+            asyncio.run(verify_dependencies(env))
+            print("PASS: published loopback PostgreSQL/Redis authenticated readiness")
             subprocess.run(
                 [
                     sys.executable,
@@ -160,7 +221,8 @@ def main():
             )
         finally:
             docker("rm", "-f", "-v", redis, postgres, check=False)
-            docker("network", "rm", network, check=False)
+            publication.close()
+            shutil.rmtree(work)
 
 
 if __name__ == "__main__":

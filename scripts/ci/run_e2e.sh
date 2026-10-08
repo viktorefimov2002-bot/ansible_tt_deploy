@@ -20,6 +20,7 @@ export TTCP_E2E_ENV_FILE="$state/environment"
 export TTCP_E2E_PROJECT="$project"
 export TTCP_E2E_FIXTURE="$state/fixture/browser.json"
 export TTCP_E2E_HTTPS_PORT=18443
+export TTCP_CI_E2E_NETWORK="$project-ingress"
 
 # An explicit local socket ignores an operator's remote Docker context/DOCKER_HOST.
 compose=(docker --host unix:///var/run/docker.sock compose --project-name "$project"
@@ -30,7 +31,13 @@ cleanup() {
   trap - EXIT
   # Keep output free of seeded tokens and configuration bodies. No trace artifacts.
   if (( result != 0 )); then "${compose[@]}" ps || true; fi
-  "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  if ! "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1; then result=1; fi
+  if [[ -f "$state/network.json" ]]; then
+    if ! python scripts/ci/networking.py cleanup --state "$state/network.json"; then
+      printf '%s\n' 'Guarded CI network cleanup failed; disposable state retained for recovery' >&2
+      exit 1
+    fi
+  fi
   # Only remove the verified, task-owned mktemp directory under this checkout.
   case "$state" in "$repo"/.tools/ci-e2e-*) rm -rf -- "$state" ;; esac
   exit "$result"
@@ -88,11 +95,13 @@ PY
 
 "${compose[@]}" config --quiet
 "${compose[@]}" build api nginx
+python scripts/ci/networking.py create --name "$TTCP_CI_E2E_NETWORK" --state "$state/network.json"
 "${compose[@]}" up -d --wait --wait-timeout 120 postgres redis
 "${compose[@]}" run --rm migrate
 "${compose[@]}" run --rm --user "$(id -u):$(id -g)" seed
 "${compose[@]}" up -d --wait --wait-timeout 120 api worker nginx
 "${compose[@]}" exec -T nginx nginx -t
+python scripts/ci/e2e_probe.py --port "$TTCP_E2E_HTTPS_PORT" --tls-dir "$state/tls"
 # Playwright failure contexts may contain DOM/configuration data; destroy those
 # with the task-owned fixture directory as well, and never upload them.
 pnpm --dir e2e test --output "$state/browser-results"

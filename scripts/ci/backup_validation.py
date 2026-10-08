@@ -19,6 +19,9 @@ from cryptography.x509.oid import NameOID
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "infra/compose/compose.ci-backup.yaml"
+sys.path.insert(0, str(ROOT))
+
+from scripts.ci.networking import PublishedNetwork, wait_https  # noqa: E402
 
 
 def prepare(directory: Path, port: int) -> dict[str, str]:
@@ -118,6 +121,9 @@ def main() -> int:
         if not name.startswith(("COMPOSE_", "DOCKER_", "MINIO_"))
     } | prepare(args.directory, args.port)
     project = "ttcp-ci-backup-" + uuid4().hex[:12]
+    work = Path(env["TTCP_CI_BACKUP_DIR"])
+    env["TTCP_CI_BACKUP_NETWORK"] = project
+    network = PublishedNetwork(project, work / "network.json")
     compose = [
         "docker",
         "--host",
@@ -132,7 +138,15 @@ def main() -> int:
     ]
     try:
         subprocess.run([*compose, "config", "--quiet"], env=env, check=True)
+        network.create()
         subprocess.run([*compose, "up", "-d", "--wait", "minio"], env=env, check=True)
+        # Container health alone cannot prove its published runner-facing TLS port works.
+        wait_https(
+            args.port,
+            "localhost",
+            work / "certs/ca.crt",
+            path="/minio/health/ready",
+        )
         subprocess.run([*compose, "run", "--rm", "setup"], env=env, check=True)
         return subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "tests/integration/test_backup_release.py"],
@@ -145,8 +159,10 @@ def main() -> int:
         try:
             subprocess.run([*compose, "down", "--volumes", "--remove-orphans"], env=env, check=True)
         finally:
-            # prepare() exclusively created this resolved directory; no preexisting tree is removed.
-            shutil.rmtree(Path(env["TTCP_CI_BACKUP_DIR"]))
+            # Retain the protected ownership record if attached containers prevent cleanup.
+            network.close()
+            # prepare() created this resolved directory; never remove a preexisting tree.
+            shutil.rmtree(work)
 
 
 if __name__ == "__main__":

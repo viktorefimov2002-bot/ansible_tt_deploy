@@ -12,6 +12,7 @@ services:
       - minio_data:/data
       - ${TTCP_CI_BACKUP_CERTS_PATH:?Generated certificate directory required}:/root/.minio/certs:ro
     networks: [backup_test]
+    dns: [127.0.0.1]
     healthcheck:
       test: [CMD, curl, --fail, --silent, --cacert, /root/.minio/certs/ca.crt, 'https://localhost:9000/minio/health/ready']
       interval: 2s
@@ -28,11 +29,13 @@ services:
     volumes:
       - ${TTCP_CI_BACKUP_CERTS_PATH:?Generated certificate directory required}/ca.crt:/root/.mc/certs/CAs/ca.crt:ro
     networks: [backup_test]
+    dns: [127.0.0.1]
     depends_on:
       minio:
         condition: service_healthy
 networks:
   backup_test:
-    internal: true
+    external: true
+    name: ${TTCP_CI_BACKUP_NETWORK:?CI runner must create an egress-blocked bridge}
 volumes:
   minio_data:

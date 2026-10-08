@@ -39,7 +39,9 @@ jobs:
           python -m ruff format --check apps tests migrations scripts/ci
           python -m mypy
       - name: PostgreSQL, Redis, migrations, NGINX, failure recovery and encrypted S3 restore
-        run: python scripts/ci/python_validation.py
+        run: |
+          python scripts/ci/network_smoke.py
+          python scripts/ci/python_validation.py
       - name: Ansible repository layout
         run: |
           result=$(bash automation/ansible/tests/layout_smoke.sh)
