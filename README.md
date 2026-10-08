@@ -28,6 +28,10 @@ and sustained disk/memory observations into PostgreSQL-backed incidents (TTCP-01
 [upgrade](docs/runbooks/upgrade-migrations.md) and
 [incident recovery](docs/runbooks/incident-recovery.md) runbooks.
 
+[Release validation](docs/release-readiness.md) adds mandatory Linux CI, disposable
+integration/backup recovery tests and separate-origin browser E2E (TTCP-021).
+Live release sign-off uses the explicit [staging acceptance checklist](docs/runbooks/staging-live-acceptance.md).
+
 Документация: [продукт](docs/product/product-spec-v0.1.md),
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),
 [план MVP](docs/planning/mvp.md).

@@ -159,7 +159,7 @@ class MonitoringService:
     def _history(self, rows, now, window):
         duration, step = WINDOWS[window]
         start = now - duration
-        series = {}
+        series: dict[str, dict[int, dict[str, float | None]]] = {}
         for row in rows:
             server_id = row["metric"].get("server_id")
             key = row["metric"].get("metric")

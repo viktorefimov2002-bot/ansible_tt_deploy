@@ -86,10 +86,14 @@ HTTP headers и request bodies не логируются. Uvicorn access log в�
 
 ## Проверки
 
+The mandatory Linux release commands, disposable service harness and remaining
+acceptance gaps are documented in [TTCP-021 release validation](../docs/release-readiness.md).
+
 ```sh
 python -m pytest -q
 python -m ruff check apps tests migrations
 python -m ruff format --check apps tests migrations
+python -m mypy
 bash infra/compose/tests/runtime_smoke.sh
 bash automation/ansible/tests/layout_smoke.sh
 ```

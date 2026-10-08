@@ -1,0 +1,38 @@
+# Disposable CI object storage only. Never merge this file into an operator stack.
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: [server, /data, --address, ':9000']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Generated disposable root identity required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Generated disposable password required}
+    ports:
+      - '127.0.0.1:${TTCP_CI_BACKUP_PORT:-19000}:9000'
+    volumes:
+      - minio_data:/data
+      - ${TTCP_CI_BACKUP_CERTS_PATH:?Generated certificate directory required}:/root/.minio/certs:ro
+    networks: [backup_test]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --cacert, /root/.minio/certs/ca.crt, 'https://localhost:9000/minio/health/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  setup:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - 'export MC_HOST_disposable="https://$$MINIO_ROOT_USER:$$MINIO_ROOT_PASSWORD@minio:9000"; mc --quiet mb --ignore-existing disposable/ttcp-ci-backups'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Generated disposable root identity required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Generated disposable password required}
+    volumes:
+      - ${TTCP_CI_BACKUP_CERTS_PATH:?Generated certificate directory required}/ca.crt:/root/.mc/certs/CAs/ca.crt:ro
+    networks: [backup_test]
+    depends_on:
+      minio:
+        condition: service_healthy
+networks:
+  backup_test:
+    internal: true
+volumes:
+  minio_data:

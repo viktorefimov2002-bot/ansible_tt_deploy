@@ -1,0 +1,13 @@
+{
+  "name": "ttcp-release-e2e",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "test": "playwright test",
+    "test:list": "playwright test --list"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

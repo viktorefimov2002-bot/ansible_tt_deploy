@@ -1,0 +1,115 @@
+# Standalone topology: no production .env, managed-node adapter, egress network or ports.
+name: ttcp-ci-e2e
+
+x-environment: &environment
+  TTCP_POSTGRES_HOST: postgres
+  TTCP_POSTGRES_DB: ttcp_e2e
+  TTCP_POSTGRES_USER: ttcp_e2e
+  TTCP_POSTGRES_PASSWORD: ${CI_POSTGRES_PASSWORD:?CI runner must generate credentials}
+  TTCP_REDIS_HOST: redis
+  TTCP_REDIS_PASSWORD: ${CI_REDIS_PASSWORD:?CI runner must generate credentials}
+  TTCP_AUTH_ENCRYPTION_KEY: ${CI_AUTH_KEY:?CI runner must generate credentials}
+  TTCP_CI_DISPOSABLE: "1"
+
+x-app: &app
+  build:
+    context: ../..
+    dockerfile: apps/Dockerfile
+    target: api
+  environment: *environment
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [isolated]
+
+services:
+  postgres:
+    image: postgres:17.11-alpine3.23
+    environment:
+      POSTGRES_DB: ttcp_e2e
+      POSTGRES_USER: ttcp_e2e
+      POSTGRES_PASSWORD: ${CI_POSTGRES_PASSWORD:?CI runner must generate credentials}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    tmpfs: [/var/lib/postgresql/data]
+    networks: [isolated]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U ttcp_e2e -d ttcp_e2e']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    environment:
+      REDIS_PASSWORD: ${CI_REDIS_PASSWORD:?CI runner must generate credentials}
+    entrypoint: [/bin/sh, /usr/local/etc/redis/start.sh]
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./redis/start.sh:/usr/local/etc/redis/start.sh:ro
+    tmpfs: [/run/redis, /data]
+    networks: [isolated]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -qx PONG']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    <<: *app
+    command: [python, -m, alembic, upgrade, head]
+
+  seed:
+    <<: *app
+    command: [python, /ci/e2e_seed.py]
+    environment:
+      <<: *environment
+      PYTHONPATH: /app
+    volumes:
+      - ../../scripts/ci:/ci:ro
+      - ${CI_E2E_FIXTURE_DIR:?CI runner must create disposable fixture directory}:/fixture
+
+  api:
+    <<: *app
+    command: [python, -m, apps.api]
+    healthcheck:
+      test: [CMD, python, -m, apps.shared.healthcheck, api]
+      interval: 2s
+      timeout: 15s
+      retries: 30
+
+  worker:
+    <<: *app
+    command: [python, /ci/e2e_worker.py]
+    environment:
+      <<: *environment
+      PYTHONPATH: /app
+    volumes:
+      - ../../scripts/ci:/ci:ro
+
+  nginx:
+    build:
+      context: ../..
+      dockerfile: infra/nginx/Dockerfile
+    environment:
+      TTCP_ADMIN_HOST: admin.localhost
+      TTCP_CLIENT_HOST: vpn.localhost
+      NGINX_ENVSUBST_FILTER: "^TTCP_(CLIENT|ADMIN)_HOST$$"
+    ports:
+      - "127.0.0.1:${CI_E2E_HTTPS_PORT:-18443}:443"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${CI_E2E_TLS_DIR:?CI runner must create disposable TLS directory}:/etc/nginx/tls:ro
+    networks: [isolated]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+networks:
+  isolated:
+    internal: true

@@ -1,0 +1,2 @@
+# Never run package lifecycle scripts in this validation-only package.
+allowBuilds: {}

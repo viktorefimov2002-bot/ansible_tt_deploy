@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "pytest-asyncio>=0.25,<1", "ruff>=0.9,<1", "jinja2>=3.1,<4"]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.25,<1", "ruff>=0.9,<1", "jinja2>=3.1,<4", "mypy==2.4.0"]
 execution = ["ansible-core>=2.18,<2.19"]
 
 [tool.setuptools.packages.find]
@@ -38,3 +38,11 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+platform = "linux"
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+ignore_missing_imports = true
+files = ["apps"]

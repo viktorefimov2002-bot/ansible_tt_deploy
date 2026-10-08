@@ -1,0 +1,118 @@
+name: Release validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-control-plane-dev.lock
+            requirements-execution.lock
+      - name: Install locked Python tools and real NGINX
+        run: |
+          python -m pip install -r requirements-control-plane-dev.lock -r requirements-execution.lock
+          sudo apt-get update
+          sudo apt-get install -y nginx
+          sudo systemctl stop nginx
+      - name: Lint, format and type checks
+        run: |
+          python -m ruff check apps tests migrations scripts/ci
+          python -m ruff format --check apps tests migrations scripts/ci
+          python -m mypy
+      - name: PostgreSQL, Redis, migrations, NGINX, failure recovery and encrypted S3 restore
+        run: python scripts/ci/python_validation.py
+      - name: Ansible repository layout
+        run: |
+          result=$(bash automation/ansible/tests/layout_smoke.sh)
+          printf '%s\n' "$result"
+          if grep -q '^SKIP:' <<< "$result"; then exit 1; fi
+
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [client-web, admin-web]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+      - name: Install locked frontend dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm --dir apps/${{ matrix.app }} install --frozen-lockfile
+      - name: Validate and build static application
+        run: |
+          pnpm --dir apps/${{ matrix.app }} lint
+          pnpm --dir apps/${{ matrix.app }} format:check
+          pnpm --dir apps/${{ matrix.app }} typecheck
+          pnpm --dir apps/${{ matrix.app }} test
+          pnpm --dir apps/${{ matrix.app }} build
+
+  compose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate development, HTTPS, backup and maintenance overlays
+        run: python scripts/ci/compose_validation.py
+      - name: Build all application/edge images and validate runtime recovery
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: bash infra/compose/tests/runtime_smoke.sh
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked browser test tools
+        run: |
+          python -m pip install -r requirements-control-plane.lock
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm --dir e2e install --frozen-lockfile
+          pnpm --dir e2e exec playwright install --with-deps chromium
+      - name: Separate-origin browser lifecycle and denied access
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+        run: |
+          printf '127.0.0.1 admin.localhost vpn.localhost\n' | sudo tee -a /etc/hosts >/dev/null
+          bash scripts/ci/run_e2e.sh

@@ -24,6 +24,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 !alembic.ini
 *.egg-info/
 
@@ -35,3 +36,5 @@ node_modules/
 apps/client-web/dist/
 apps/admin-web/dist/
 .pnpm-store/
+e2e/test-results/
+e2e/playwright-report/

@@ -113,7 +113,7 @@ def advance(state, bad, observed, evaluated, rule):
 class OperationalAlertService:
     def __init__(self, engine, metrics):
         self.engine, self.metrics = engine, metrics
-        self.next_poll = 0
+        self.next_poll = 0.0
 
     async def tick(self):
         # Process-local throttling is only an optimization; all business state
