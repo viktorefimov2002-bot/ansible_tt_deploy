@@ -90,7 +90,11 @@ jobs:
       - name: Build all application/edge images and validate runtime recovery
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
-        run: bash infra/compose/tests/runtime_smoke.sh
+        run: |
+          for attempt in 1 2 3; do
+            printf 'CHECK: compose-smoke-run=%s\n' "$attempt"
+            bash infra/compose/tests/runtime_smoke.sh
+          done
 
   e2e:
     runs-on: ubuntu-24.04

@@ -16,6 +16,8 @@ The Linux publication fix and exact-SHA next-push acceptance procedure are in
 [CI networking recovery](ci-networking.md).
 The registry-denied backup fixture and verified source-build replacement are
 documented in [CI backup images](ci-backup-images.md).
+The intermittent Compose exec exit 255, exact cache-header reproduction and
+three-run smoke gate are documented in [Compose smoke recovery](ci-compose-smoke.md).
 
 | Gate | Evidence required |
 | --- | --- |

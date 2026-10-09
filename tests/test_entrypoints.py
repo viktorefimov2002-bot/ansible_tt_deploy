@@ -37,7 +37,8 @@ def test_entrypoint_fails_clearly_without_leaking_secrets(service, failure):
         timeout=15,
         check=False,
     )
-    assert result.returncode != 0
+    expected_exit = 3 if service == "api" and failure == "connectivity" else 1
+    assert result.returncode == expected_exit
     assert secret not in result.stdout + result.stderr
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert events and all(event["service"] == service for event in events)
