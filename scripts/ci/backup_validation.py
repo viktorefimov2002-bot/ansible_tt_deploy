@@ -138,8 +138,15 @@ def main() -> int:
     ]
     try:
         subprocess.run([*compose, "config", "--quiet"], env=env, check=True)
+        # Verify both pinned build/runtime bases and build both official release
+        # sources before creating infrastructure. No registry-image/mock fallback.
+        subprocess.run([*compose, "build", "--pull", "minio", "setup"], env=env, check=True)
         network.create()
-        subprocess.run([*compose, "up", "-d", "--wait", "minio"], env=env, check=True)
+        subprocess.run(
+            [*compose, "up", "-d", "--wait", "--no-build", "--pull", "never", "minio"],
+            env=env,
+            check=True,
+        )
         # Container health alone cannot prove its published runner-facing TLS port works.
         wait_https(
             args.port,
@@ -147,7 +154,11 @@ def main() -> int:
             work / "certs/ca.crt",
             path="/minio/health/ready",
         )
-        subprocess.run([*compose, "run", "--rm", "setup"], env=env, check=True)
+        subprocess.run(
+            [*compose, "run", "--rm", "--no-deps", "--pull", "never", "setup"],
+            env=env,
+            check=True,
+        )
         return subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "tests/integration/test_backup_release.py"],
             cwd=ROOT,

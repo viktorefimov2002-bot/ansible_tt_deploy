@@ -1,5 +1,8 @@
 # TTCP-021 Linux publication recovery
 
+The latest backup image-availability incident (`37898407431`, `e402dd2b`) and the
+registry verification/source-build decision are in [CI backup images](ci-backup-images.md).
+
 ## Incident and scope
 
 [Actions run 37787314386](https://github.com/viktorefimov2002-bot/ansible_tt_deploy/actions/runs/37787314386)

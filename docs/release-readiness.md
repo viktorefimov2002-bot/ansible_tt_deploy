@@ -14,6 +14,8 @@ both web matrix entries) after owner approval.
 
 The Linux publication fix and exact-SHA next-push acceptance procedure are in
 [CI networking recovery](ci-networking.md).
+The registry-denied backup fixture and verified source-build replacement are
+documented in [CI backup images](ci-backup-images.md).
 
 | Gate | Evidence required |
 | --- | --- |
@@ -63,6 +65,10 @@ the tools in that exact disposable server image; only ciphertext files leave the
 pipeline. The required backup harness creates a second disposable MinIO/mc project
 with a temporary CA and random keys. Both runners clean up their own containers and
 volumes, including on test failure. No operator `.env` or backup configuration is read.
+The CI MinIO/mc images are built first from checksummed official release sources
+with compiler/runtime digests pinned; unavailable image/source inputs fail the
+gate. Runtime startup cannot pull a different image. The fixture's TLS, signatures,
+encryption and restore test remain real and mandatory.
 
 Python PostgreSQL/Redis use kernel-selected **explicit** loopback host ports:
 Docker's empty host-port assignment is not stable through restart. The mandatory
