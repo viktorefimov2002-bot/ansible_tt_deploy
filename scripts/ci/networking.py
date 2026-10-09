@@ -18,6 +18,17 @@ HOSTS = {"localhost", "admin.localhost", "vpn.localhost"}
 LABEL = "ttcp.ci.published"
 
 
+def available_loopback_port() -> int:
+    """Request a kernel-selected but explicit Docker binding, stable across restart.
+
+    A competing bind before container start must fail, never change the address.
+    Docker's empty host port would instead be reallocated on every restart.
+    """
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        return reservation.getsockname()[1]
+
+
 def published_port(output: str) -> int:
     match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", output.strip())
     if not match or not 1 <= int(match[1]) <= 65535:

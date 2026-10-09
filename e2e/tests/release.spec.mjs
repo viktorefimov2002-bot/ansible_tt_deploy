@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { diagnostics } from "../safe-stages.mjs";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const port = process.env.TTCP_E2E_HTTPS_PORT ?? "18443";
@@ -95,23 +96,39 @@ async function status(page, path, method = "GET", body) {
   );
 }
 
+async function submit(page, path, name) {
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (item) =>
+        new URL(item.url()).pathname === path &&
+        item.request().method() === "POST",
+    ),
+    page.getByRole("button", { name, exact: true }).click(),
+  ]);
+  return response;
+}
+
 test("release journey, durable recovery and separate Admin/Client security boundaries", async ({
   browser,
 }) => {
   const seeded = identities();
+  const diagnostic = diagnostics();
+  const stage = (label) => diagnostic.checkpoint(label);
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const unexpectedNetwork = [];
   // Egress guard only; application API responses are never mocked.
   const guard = (route) => {
     const origin = new URL(route.request().url()).origin;
     if ([adminOrigin, clientOrigin].includes(origin)) return route.continue();
-    unexpectedNetwork.push(origin);
+    unexpectedNetwork.push(true);
     return route.abort();
   };
   await context.route("**/*", guard);
   try {
     const admin = await context.newPage();
+    stage("admin-login");
     await login(admin, seeded.admin);
+    stage("admin-refresh");
     await admin.reload();
     await expect(
       admin.getByRole("heading", { name: "Dashboard", exact: true }),
@@ -126,6 +143,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
       httpOnly: true,
       sameSite: "Strict",
     });
+    stage("server-form");
     await admin.getByRole("button", { name: "Servers", exact: true }).click();
     await admin.getByText("Add managed server", { exact: true }).click();
     for (const [label, value] of [
@@ -138,37 +156,32 @@ test("release journey, durable recovery and separate Admin/Client security bound
       ["Management OpenSSH private key", seeded.ssh.private_key],
     ])
       await admin.getByLabel(label, { exact: true }).fill(value);
-    const createdServer = admin.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/servers" &&
-        response.request().method() === "POST",
-    );
-    await admin
-      .getByRole("button", { name: "Create server", exact: true })
-      .click();
-    const serverResponse = await createdServer;
+    stage("server-submit");
+    const serverResponse = await submit(admin, "/api/servers", "Create server");
     expect(serverResponse.status()).toBe(201);
     const serverId = (await serverResponse.json()).id;
     await expect(
       admin.getByRole("heading", { name: "ci-node", exact: true }),
     ).toBeVisible();
+    stage("user-form");
     await admin.getByRole("button", { name: "VPN users", exact: true }).click();
     await admin.getByText("Add VPN user", { exact: true }).click();
     await admin.getByLabel("Display name", { exact: true }).fill("CI Client");
     await admin.getByLabel("Device limit", { exact: true }).fill("1");
-    const createdUser = admin.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/vpn-users" &&
-        response.request().method() === "POST",
+    stage("user-submit");
+    const userResponse = await submit(
+      admin,
+      "/api/vpn-users",
+      "Create VPN user",
     );
-    await admin
-      .getByRole("button", { name: "Create VPN user", exact: true })
-      .click();
-    const userResponse = await createdUser;
     expect(userResponse.status()).toBe(201);
     const userId = (await userResponse.json()).id;
+    stage("user-select");
     await admin.getByLabel("VPN user", { exact: true }).selectOption(userId);
-    await admin.getByLabel("Access mode", { exact: true }).selectOption("all");
+    stage("access-grant");
+    await admin
+      .getByRole("combobox", { name: /^Access mode/ })
+      .selectOption("all");
     await admin
       .getByRole("button", { name: "Save access", exact: true })
       .click();
@@ -181,6 +194,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
         exact: false,
       }),
     ).toBeVisible();
+    stage("invitation-create");
     await admin
       .getByRole("button", { name: "Invitations", exact: true })
       .click();
@@ -194,11 +208,13 @@ test("release journey, durable recovery and separate Admin/Client security bound
     expect(new URL(invitation).origin).toBe(clientOrigin);
 
     const client = await context.newPage();
+    stage("client-exchange");
     await client.goto(invitation);
     await expect(
       client.getByRole("heading", { name: "CI Client", exact: true }),
     ).toBeVisible();
     expect(new URL(client.url()).hash).toBe("");
+    stage("invitation-replay");
     const replay = await context.request.post(
       `${clientOrigin}/api/client/exchange`,
       {
@@ -210,6 +226,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
       },
     );
     expect(replay.status()).toBe(401);
+    stage("client-refresh");
     await client.reload();
     await expect(
       client.getByRole("heading", { name: "CI Client", exact: true }),
@@ -231,32 +248,32 @@ test("release journey, durable recovery and separate Admin/Client security bound
       httpOnly: true,
       sameSite: "Strict",
     });
+    stage("device-create");
     await client
       .getByLabel("Название нового устройства", { exact: true })
       .fill("CI Phone");
     await client
-      .getByLabel("Платформа", { exact: true })
+      .getByRole("combobox", { name: /^Платформа/ })
       .selectOption("Android");
-    const createdDevice = client.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/client/devices" &&
-        response.request().method() === "POST",
+    const deviceResponse = await submit(
+      client,
+      "/api/client/devices",
+      "Добавить устройство",
     );
-    await client
-      .getByRole("button", { name: "Добавить устройство", exact: true })
-      .click();
-    const deviceResponse = await createdDevice;
     expect(deviceResponse.status()).toBe(201);
     const deviceId = (await deviceResponse.json()).id;
+    stage("device-select");
     await client
-      .getByLabel("Ваше устройство", { exact: true })
+      .getByRole("combobox", { name: /^Ваше устройство/ })
       .selectOption(deviceId);
+    stage("server-select");
     await client
-      .getByLabel("Сервер подключения", { exact: true })
+      .getByRole("combobox", { name: /^Сервер подключения/ })
       .selectOption(serverId);
     await expect(
       client.getByText("Устройства: 1 из 1", { exact: false }),
     ).toBeVisible();
+    stage("quota-denial");
     expect(
       await status(client, "/api/client/devices", "POST", {
         name: "Over quota",
@@ -264,14 +281,26 @@ test("release journey, durable recovery and separate Admin/Client security bound
     ).toBe(409);
 
     // Persist intent while the worker is stopped, then lose all ephemeral Redis state.
+    stage("worker-stop");
     compose("stop", "worker");
+    stage("credential-queue");
     await client
       .getByRole("button", { name: "Настроить подключение", exact: true })
       .click();
     await expect(client.getByText("В очереди", { exact: true })).toBeVisible();
+    stage("redis-restart");
     compose("restart", "redis");
     compose("up", "-d", "--wait", "--wait-timeout", "60", "redis");
+    stage("worker-start");
     compose("up", "-d", "worker");
+    stage("configuration-ready");
+    await expect(
+      client.getByRole("button", {
+        name: "Получить конфигурацию",
+        exact: true,
+      }),
+    ).toBeEnabled();
+    stage("configuration-delivery");
     await client
       .getByRole("button", { name: "Получить конфигурацию", exact: true })
       .click();
@@ -292,11 +321,11 @@ test("release journey, durable recovery and separate Admin/Client security bound
         exact: true,
       }),
     ).toBeVisible();
-    const downloaded = client.waitForEvent("download");
-    await client
-      .getByRole("button", { name: "Скачать TOML", exact: true })
-      .click();
-    const file = await downloaded;
+    stage("configuration-download");
+    const [file] = await Promise.all([
+      client.waitForEvent("download"),
+      client.getByRole("button", { name: "Скачать TOML", exact: true }).click(),
+    ]);
     expect(file.suggestedFilename()).toBe("trusttunnel.toml");
     const stream = await file.createReadStream();
     const chunks = [];
@@ -312,6 +341,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
     }
 
     // Wrong-origin routes are denied by the production NGINX allowlist before the API.
+    stage("origin-denials");
     for (const path of [
       "/api/auth/me",
       "/api/servers",
@@ -364,6 +394,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
       }, adminOrigin),
     ).toBe(true);
 
+    stage("device-revoke");
     await client
       .getByRole("button", { name: "Отозвать устройство", exact: true })
       .click();
@@ -381,6 +412,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
         "POST",
       ),
     ).toBe(409);
+    stage("credential-revoke");
     await expect
       .poll(async () => {
         const response = await context.request.get(
@@ -392,6 +424,7 @@ test("release journey, durable recovery and separate Admin/Client security bound
           : `http-${response.status()}`;
       })
       .toBe("revoked");
+    stage("audit-check");
     for (const action of [
       "client.configuration.deliver",
       "credential.create.applied",
@@ -412,13 +445,10 @@ test("release journey, durable recovery and separate Admin/Client security bound
         ),
       ).toBe(true);
     }
-    const clientLogout = client.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/client/logout" &&
-        response.request().method() === "POST",
+    stage("client-logout");
+    expect((await submit(client, "/api/client/logout", "Выйти")).status()).toBe(
+      204,
     );
-    await client.getByRole("button", { name: "Выйти", exact: true }).click();
-    expect((await clientLogout).status()).toBe(204);
     await client.reload();
     await expect(
       client.getByRole("heading", { name: "Вход по приглашению", exact: true }),
@@ -428,7 +458,9 @@ test("release journey, durable recovery and separate Admin/Client security bound
     await viewerContext.route("**/*", guard);
     try {
       const viewer = await viewerContext.newPage();
+      stage("viewer-login");
       await login(viewer, seeded.viewer);
+      stage("viewer-denials");
       expect(
         await status(viewer, "/api/vpn-users", "POST", {
           display_name: "Forbidden",
@@ -453,21 +485,23 @@ test("release journey, durable recovery and separate Admin/Client security bound
         }),
       ).toBe(403);
     } finally {
-      await viewerContext.close();
+      await viewerContext.close().catch(() => {});
     }
-    const adminLogout = admin.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/auth/logout" &&
-        response.request().method() === "POST",
+    stage("admin-logout");
+    expect((await submit(admin, "/api/auth/logout", "Sign out")).status()).toBe(
+      204,
     );
-    await admin.getByRole("button", { name: "Sign out", exact: true }).click();
-    expect((await adminLogout).status()).toBe(204);
     await admin.reload();
     await expect(
       admin.getByRole("heading", { name: "Sign in", exact: true }),
     ).toBeVisible();
     expect(unexpectedNetwork).toEqual([]);
+    stage("complete");
+  } catch {
+    throw diagnostic.failure();
   } finally {
-    await context.close();
+    // The runner owns browser disposal; avoid replacing the primary stage failure
+    // when Playwright already closed the context at its deadline.
+    await context.close().catch(() => {});
   }
 });

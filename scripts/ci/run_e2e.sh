@@ -104,4 +104,5 @@ python scripts/ci/networking.py create --name "$TTCP_CI_E2E_NETWORK" --state "$s
 python scripts/ci/e2e_probe.py --port "$TTCP_E2E_HTTPS_PORT" --tls-dir "$state/tls"
 # Playwright failure contexts may contain DOM/configuration data; destroy those
 # with the task-owned fixture directory as well, and never upload them.
+pnpm --dir e2e test:diagnostics
 pnpm --dir e2e test --output "$state/browser-results"

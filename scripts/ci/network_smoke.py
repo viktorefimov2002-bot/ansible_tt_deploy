@@ -14,7 +14,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from scripts.ci.networking import PublishedNetwork, published_port, wait_tcp  # noqa: E402
+from scripts.ci.networking import (  # noqa: E402
+    PublishedNetwork,
+    available_loopback_port,
+    published_port,
+    wait_tcp,
+)
 
 REDIS_IMAGE = "redis:7.4.11-alpine3.21"
 
@@ -110,8 +115,9 @@ def start_redis(network, name, env_file, *, publish=False):
         "-v",
         f"{ROOT / 'infra/compose/redis'}:/usr/local/etc/redis:ro",
     ]
+    port = available_loopback_port() if publish else None
     if publish:
-        options.extend(["-p", "127.0.0.1::6379"])
+        options.extend(["-p", f"127.0.0.1:{port}:6379"])
     network.docker(
         *options,
         "--entrypoint",
@@ -129,9 +135,28 @@ def start_redis(network, name, env_file, *, publish=False):
             check=False,
         )
         if result.returncode == 0 and result.stdout.strip() == "PONG":
-            return
+            if publish:
+                actual = published_port(network.docker("port", name, "6379/tcp").stdout)
+                if actual != port:
+                    raise RuntimeError("Redis publication differs from its explicit binding")
+            return port
         time.sleep(0.1)
     raise RuntimeError("Disposable Redis canary did not become ready")
+
+
+def published_redis_ping(port, password):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1) as connection:
+                connection.sendall(f"AUTH {password}\r\nPING\r\n".encode())
+                with connection.makefile("rb") as reply:
+                    if reply.readline() == b"+OK\r\n" and reply.readline() == b"+PONG\r\n":
+                        return
+        except OSError:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError("Loopback publication failed its Redis protocol check")
 
 
 def main():
@@ -154,20 +179,19 @@ def main():
         try:
             protected.create()
             outside.create()
-            start_redis(protected, server, env_file, publish=True)
+            port = start_redis(protected, server, env_file, publish=True)
             start_redis(protected, peer, env_file)
             start_redis(outside, canary, env_file, publish=True)
-            port = published_port(protected.docker("port", server, "6379/tcp").stdout)
             wait_tcp(port, "network drill Redis", timeout=5)
-            # A real Redis request must work across publication, including the reply.
-            with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
-                connection.sendall(f"AUTH {password}\r\nPING\r\n".encode())
-                reply = connection.makefile("rb")
-                try:
-                    if reply.readline() != b"+OK\r\n" or reply.readline() != b"+PONG\r\n":
-                        raise RuntimeError("Loopback publication failed its Redis protocol check")
-                finally:
-                    reply.close()
+            published_redis_ping(port, password)
+            for lifecycle in (("restart",), ("stop", "start")):
+                for action in lifecycle:
+                    protected.docker(action, server)
+                if published_port(protected.docker("port", server, "6379/tcp").stdout) != port:
+                    raise RuntimeError("Redis host port changed across its lifecycle")
+                wait_tcp(port, "restarted network drill Redis", timeout=5)
+                published_redis_ping(port, password)
+            print("PASS: stable loopback Redis AUTH/PING across restart and stop/start")
             redis_connection(protected, peer, server, 6379, allowed=True)
             network_info = json.loads(
                 protected.docker("network", "inspect", protected.name).stdout

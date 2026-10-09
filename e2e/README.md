@@ -43,8 +43,19 @@ file, and removes only its own containers and temporary fixture. Browser network
 requests are restricted to the two local origins. Traces, videos, screenshots
 and fixture/configuration bodies are excluded from CI artifacts to avoid making
 test credentials a bad logging precedent.
-Failure contexts are written under the disposable fixture directory and removed
-by cleanup; assertion diagnostics compare cookie attributes without token values.
+Diagnostics print only allowlisted stages and elapsed milliseconds. Raw browser
+errors (including URLs, fill values and DOM excerpts) are replaced with a safe
+stage failure. `PLAYWRIGHT_NO_COPY_PROMPT=1` suppresses the locked runner's automatic
+DOM snapshot; any remaining failure context contains safe errors/source only and
+is removed with the fixture. No failure artifacts are uploaded. Response/download
+waits are paired with their actions to avoid dangling rejected promises. Browser
+actions/navigation are bounded at 10/15 seconds, while the journey retains its
+120-second deadline. Cleanup cannot overwrite the primary stage failure.
+
+Dropdowns use semantic combobox selectors with label prefixes. Their wrapping
+labels include option text, so exact `getByLabel` matches can silently wait for
+the full test deadline. This affected Access mode and the Client platform/device/
+server choices in run `37795769907`. No UI or product behavior was changed.
 
 The sole fixture is the managed-node execution port: it accepts only credential
 create/revoke for `managed-node.invalid` and `vpn-node.invalid`, executes no shell,

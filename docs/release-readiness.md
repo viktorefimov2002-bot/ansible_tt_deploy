@@ -9,7 +9,8 @@ adds validation, not product features or an architecture change. The UI is uncha
 `.github/workflows/release-validation.yml` runs on pull requests, pushes and manual
 dispatch, on disposable Ubuntu 24.04 runners. It has read-only repository permission,
 does not retain checkout credentials, and has no deployment, publication or SSH step.
-Configure repository branch protection to require all four jobs after owner approval.
+Configure repository branch protection to require all five job results (including
+both web matrix entries) after owner approval.
 
 The Linux publication fix and exact-SHA next-push acceptance procedure are in
 [CI networking recovery](ci-networking.md).
@@ -63,6 +64,15 @@ pipeline. The required backup harness creates a second disposable MinIO/mc proje
 with a temporary CA and random keys. Both runners clean up their own containers and
 volumes, including on test failure. No operator `.env` or backup configuration is read.
 
+Python PostgreSQL/Redis use kernel-selected **explicit** loopback host ports:
+Docker's empty host-port assignment is not stable through restart. The mandatory
+network drill requires authenticated Redis connectivity at the same port after
+restart and stop/start; durable recovery tests independently check the mapping.
+Compose polls the existing API for two consecutive ready responses within 45 seconds
+after dependency recreation/recovery, checks liveness and unchanged container/start
+identity, then verifies a durable job after PostgreSQL replacement. Collector metrics
+also have bounded eventual recovery. Persistent failure remains a failed gate.
+
 `TTCP_CI=1` validates disposable target names, literal loopback addresses and synthetic
 credentials before tests connect. Any test/collection skip fails the CI session.
 The Linux Ansible layout gate also rejects its optional `SKIP:` branch.
@@ -79,7 +89,12 @@ host-access bridge. Browser egress is restricted to the two test origins, and on
 loopback HTTPS is published. This establishes the control-plane
 journey; it does not establish VPN connectivity or installation on a real node.
 
-No browser trace, video, screenshot or generated configuration is uploaded. Test
+Browser diagnostics contain allowlisted stage names and elapsed milliseconds only.
+Raw Playwright errors are replaced with a stage failure, response/download waits
+are paired with their actions, and action/navigation limits are 10/15 seconds;
+the overall journey still has its original 120-second limit. The pinned runner's
+`PLAYWRIGHT_NO_COPY_PROMPT=1` disables DOM snapshots in failure contexts. No browser
+trace, video, screenshot or generated configuration is uploaded. Test
 identities/TLS/private material live only in ignored temporary directories and are
 destroyed by the harness. Never upload `.tools`, Docker inspect/config output, the
 fixture JSON, protected backup configs or browser downloads as diagnostics.

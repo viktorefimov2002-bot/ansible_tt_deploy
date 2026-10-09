@@ -12,6 +12,7 @@ from sqlalchemy import text
 from apps.jobs.ports import TransportUnavailable
 from apps.jobs.service import JobService, LostClaim
 from apps.jobs.worker import Worker
+from scripts.ci.networking import published_port, wait_tcp
 from tests.disposable import REDIS_CONTAINER, validate_ci_environment
 from tests.test_job_redis import redis_transport  # noqa: F401
 from tests.test_jobs import create, due, expire
@@ -36,7 +37,13 @@ async def docker_service(action, name):
     assert action in {"stop", "start", "restart"}
     assert REDIS_CONTAINER.fullmatch(name)
     process = await asyncio.create_subprocess_exec(
-        "docker", action, name, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        "docker",
+        "--host",
+        "unix:///var/run/docker.sock",
+        action,
+        name,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     try:
         assert await asyncio.wait_for(process.wait(), 30) == 0, "Redis lifecycle command failed"
@@ -44,6 +51,28 @@ async def docker_service(action, name):
         if process.returncode is None:
             process.kill()
             await process.wait()
+    if action in ("start", "restart"):
+        # Existing clients and worker subprocesses must retain the same endpoint.
+        binding = await asyncio.create_subprocess_exec(
+            "docker",
+            "--host",
+            "unix:///var/run/docker.sock",
+            "port",
+            name,
+            "6379/tcp",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            output, _ = await asyncio.wait_for(binding.communicate(), 10)
+            assert binding.returncode == 0, "Restarted Redis has no loopback publication"
+            port = published_port(output.decode())
+            assert port == int(os.environ["TTCP_REDIS_PORT"]), "Redis host port changed on restart"
+            await asyncio.to_thread(wait_tcp, port, "restarted Redis")
+        finally:
+            if binding.returncode is None:
+                binding.kill()
+                await binding.wait()
 
 
 async def wait_redis(transport):

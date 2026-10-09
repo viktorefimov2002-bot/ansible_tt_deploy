@@ -18,6 +18,43 @@ describes loopback publication and NAT/gateway behavior.
 
 ## Fixture networking
 
+### Follow-up: run 37795769907 (`5b5de83b`)
+
+[This run](https://github.com/viktorefimov2002-bot/ansible_tt_deploy/actions/runs/37795769907)
+passed both web jobs; Python, Compose and E2E failed:
+
+- Python first reached Redis at `127.0.0.1:32771`, then lost that endpoint after
+  restart (one failure and six subsequent connection errors; 535 tests passed).
+  `127.0.0.1::6379` stores an unspecified host port in Docker's container configuration,
+  allowing allocation to change on restart. The runner now selects a kernel-free
+  port and requests that explicit loopback binding. A competing bind causes a
+  fail-closed startup failure, never an address fallback. PostgreSQL uses the same
+  policy. The network drill authenticates through the unchanged port after both
+  restart and stop/start; durable tests check the published mapping and TCP reachability
+  before waiting for authenticated recovery. Existing clients are never retargeted.
+- Compose made one readiness request after PostgreSQL recreation and exited on 503.
+  That evidence does not establish persistent reconnect failure. The new 45-second
+  probe requires two consecutive `200`/`ready` responses from the existing API,
+  checks liveness between attempts and records only attempts/unavailable count/time.
+  Container ID, start timestamp and restart count must remain unchanged. A durable
+  job and actual collector metrics must also recover. A real PostgreSQL regression
+  terminates only the API pool's own backend PIDs and verifies the same API/dependency
+  object recovers; persistent HTTP 503 and liveness loss regressions remain failures.
+- E2E exhausted its 120-second deadline, and context cleanup masked the action.
+  A local Chromium reproduction against the compiled Admin app identified the
+  Access mode exact-label selector: its wrapping label includes option text, so
+  `getByLabel("Access mode", {exact:true})` matches nothing. All three Client
+  dropdowns shared this defect. Semantic combobox prefix selectors now pass the
+  compiled-app reproduction. Safe stage/time diagnostics, bounded actions and
+  paired response waits identify future failures without logging URLs, DOM, cookies,
+  passwords, invitations, TOML, tokens or raw exceptions. DOM failure snapshots are
+  disabled in the pinned Playwright runner; no artifacts are uploaded. The overall
+  deadline is unchanged.
+
+No product code, port exposure policy, origin routing, firewall rule or disposable
+target guard changed. Full Linux restart/Compose/real-API browser execution remains
+unverified locally on Docker 24.0.2; it must pass on the newly reviewed commit.
+
 `scripts/ci/networking.py` creates a fresh, labelled bridge with a random Linux
 interface name, IPv6 disabled, IPv4 NAT publication, masquerading disabled and
 default host binding `127.0.0.1`. Every explicit publication also binds `127.0.0.1`.
@@ -81,7 +118,7 @@ No commit, push or workflow dispatch is performed by this fix. After the owner
 reviews and chooses to commit/push:
 
 1. Record the full SHA of the reviewed commit. Open its new **Release validation**
-   push run on GitHub. Re-running `37787314386` tests the old SHA and cannot validate
+   push run on GitHub. Re-running `37787314386` or `37795769907` tests an old SHA and cannot validate
    these local changes. A PR run can use a merge SHA; record that exact tested SHA too.
 2. Confirm the run's checked-out SHA matches the reviewed SHA. If the commit changes,
    review and run again; do not combine green checks from different commits/attempts.
@@ -89,9 +126,12 @@ reviews and chooses to commit/push:
    `e2e` all completed with `success` on that run. Cancellation, a skipped gate or an
    earlier green job from another SHA does not satisfy acceptance.
 4. In Python logs require the network drill PASS and published PostgreSQL/Redis
-   authenticated readiness, the full suite with **zero skips**, the real MinIO drill
+   authenticated readiness, stable Redis restart/stop-start AUTH/PING, the full
+   suite with **zero skips**, the real MinIO drill
    and the Ansible layout gate without `SKIP:`. In E2E require both published HTTPS
-   origin-boundary PASS lines and the actual journey passed. Discovery is not a run.
+   origin-boundary PASS lines, stage completion and the actual journey passed.
+   Compose must report bounded API recovery after recreation and each outage,
+   without changing the API identity, and finish the runtime smoke. Discovery is not a run.
 5. If an additional failure emerges, retain its run ID, exact SHA, safe traceback and
    failed step; fix it and repeat all mandatory gates. Never upload environment,
    ownership-directory credential files, browser failure contexts or client configs.
@@ -120,3 +160,20 @@ the required Docker/iptables/Chromium workflow on the reviewed commit.
 | `python -m ruff check apps tests migrations scripts/ci`; `python -m ruff format --check apps tests migrations scripts/ci`; `python -m mypy` | Passed; application type check covers 65 files. |
 | Git Bash `bash -n scripts/ci/run_e2e.sh`; Node syntax; Prettier; `pnpm --dir e2e test:list` | Passed; one browser journey discovered. Discovery is not execution. |
 | WSL `python3 scripts/ci/networking.py create --name ttcp-ci-compat-check-20261008 --state .tools/ci-compat-check-20261008.json` | Correctly failed the Docker 28+ requirement on Engine 24.0.2 before mutations; no ownership record created. |
+
+### Follow-up verification on `5b5de83b` plus local fixes
+
+These are local working-tree results, not five-job GitHub acceptance:
+
+| Check actually run | Result |
+| --- | --- |
+| `.venv/Scripts/python.exe .tools/ttcp021-tests.py -q tests/test_postgres_recovery.py tests/test_migrations.py tests/test_ci_recovery.py tests/test_ci_networking.py tests/test_ci_safety.py tests/test_ci_e2e.py tests/test_ci_e2e_probe.py tests/test_ci_backup_networking.py tests/test_bootstrap.py --basetemp=.tools/pytest-ci-recovery-pg-20261008-final --tb=short -p no:cacheprovider` | 114 passed, zero skips; task-owned native PostgreSQL 17, real NGINX/TLS and socket/HTTP failure recovery. The ignored local launcher supplies only disposable settings. |
+| `node .tools/repro021-browser.mjs` | Chromium-based Edge against compiled Admin/Client apps: original exact labels had zero matches; fixed Admin flow reached invitation creation and all three Client dropdown selections passed. Synthetic API responses were used only for this selector reproduction; it is not the mandatory real-API E2E. |
+| `pnpm --dir e2e test:diagnostics`; `pnpm --dir e2e test:list` | Two diagnostic redaction tests passed with zero skips; one release journey discovered. |
+| Ruff lint/format, mypy, five Compose overlay validations, Node syntax/Prettier and Git Bash `bash -n` for both changed shell scripts | Passed. |
+| WSL local Docker version | Still 24.0.2. Full Docker restart/network drill, Compose runtime smoke and real-API browser journey cannot be certified on this host without violating the required Engine 28+ guard. |
+
+After the next owner-reviewed push, require all five job results on that exact new
+SHA with no skipped mandatory steps, using the verification procedure above. A
+single transient 503 may appear before eventual recovery; expiry of the probe
+deadline, lost liveness or a changed API identity fails acceptance.

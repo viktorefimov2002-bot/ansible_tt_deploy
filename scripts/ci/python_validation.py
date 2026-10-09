@@ -13,7 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from scripts.ci.networking import PublishedNetwork, published_port, wait_tcp  # noqa: E402
+from scripts.ci.networking import (  # noqa: E402
+    PublishedNetwork,
+    available_loopback_port,
+    published_port,
+    wait_tcp,
+)
 
 
 async def verify_dependencies(env):
@@ -98,6 +103,7 @@ def main():
         redis_env.chmod(0o600)
         try:
             publication.create()
+            postgres_port = available_loopback_port()
             docker(
                 "run",
                 "-d",
@@ -110,11 +116,12 @@ def main():
                 "--env-file",
                 str(pg_env),
                 "-p",
-                "127.0.0.1::5432",
+                f"127.0.0.1:{postgres_port}:5432",
                 "--tmpfs",
                 "/var/lib/postgresql/data:rw,size=512m",
                 "postgres:17.11-alpine3.23",
             )
+            redis_port = available_loopback_port()
             docker(
                 "run",
                 "-d",
@@ -127,7 +134,7 @@ def main():
                 "--env-file",
                 str(redis_env),
                 "-p",
-                "127.0.0.1::6379",
+                f"127.0.0.1:{redis_port}:6379",
                 "--tmpfs",
                 "/run/redis:rw,size=1m",
                 "--tmpfs",
@@ -153,13 +160,16 @@ def main():
                 else:
                     raise RuntimeError("Disposable service did not become ready")
 
-            def port(container, internal):
+            def port(container, internal, expected):
                 result = docker("port", container, internal, check=False)
                 if result.returncode:
                     raise RuntimeError(
                         "Docker has no published loopback binding; container health is insufficient"
                     )
-                return str(published_port(result.stdout))
+                actual = published_port(result.stdout)
+                if actual != expected:
+                    raise RuntimeError("Disposable service lost its explicit loopback binding")
+                return str(actual)
 
             # Use the exact PostgreSQL 17 tools shipped in the disposable server.
             # Forward secrets as environment, never command arguments or plaintext files.
@@ -180,12 +190,12 @@ def main():
                 TTCP_TEST_REDIS="1",
                 TTCP_TEST_BACKUP_ROUNDTRIP="1",
                 TTCP_POSTGRES_HOST="127.0.0.1",
-                TTCP_POSTGRES_PORT=port(postgres, "5432/tcp"),
+                TTCP_POSTGRES_PORT=port(postgres, "5432/tcp", postgres_port),
                 TTCP_POSTGRES_DB="ttcp_ci_" + token,
                 TTCP_POSTGRES_USER="ttcp_ci",
                 TTCP_POSTGRES_PASSWORD=pg_password,
                 TTCP_REDIS_HOST="127.0.0.1",
-                TTCP_REDIS_PORT=port(redis, "6379/tcp"),
+                TTCP_REDIS_PORT=port(redis, "6379/tcp", redis_port),
                 TTCP_REDIS_PASSWORD=redis_password,
                 TTCP_TEST_REDIS_CONTAINER=redis,
                 PATH=str(bin_dir) + os.pathsep + env["PATH"],

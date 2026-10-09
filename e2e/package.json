@@ -4,6 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@11.19.0",
   "scripts": {
+    "test:diagnostics": "node --test safe-stages.test.mjs",
     "test": "playwright test",
     "test:list": "playwright test --list"
   },

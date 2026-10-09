@@ -42,6 +42,17 @@ dc exec -T nginx nginx -t
 dc exec -T api python -m apps.shared.healthcheck api
 dc exec -T worker python -m apps.shared.healthcheck worker
 sql() { dc exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -At' ; }
+api_identity() {
+    docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' "$(dc ps -aq api)"
+}
+wait_api_recovery() {
+    # Probe the live API's existing pools. Dependency health or a new worker
+    # connection cannot demonstrate recovery of those pools.
+    dc exec -T api python - < "$COMPOSE_DIR/../../scripts/ci/api_recovery.py"
+    if [ "$(api_identity)" != "$api_before" ]; then
+        echo 'FAIL: API restarted instead of reconnecting' >&2; exit 1
+    fi
+}
 
 # Use only this disposable project's database/Redis. No public job creation API.
 create_job() {
@@ -67,8 +78,12 @@ wait_job "$job_id"
 test "$(printf "SELECT attempts FROM jobs WHERE id='%s';\n" "$job_id" | sql)" = 1
 test "$(dc exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli XLEN "ttcp:jobs:log:$1"' sh "$job_id")" -gt 0
 printf 'CREATE TABLE runtime_probe (value text); INSERT INTO runtime_probe VALUES ($$persistent$$);\n' | sql
+api_before=$(api_identity)
 dc up -d --force-recreate --no-deps --wait --wait-timeout 120 postgres
+wait_api_recovery
 test "$(printf 'SELECT value FROM runtime_probe;\n' | sql)" = persistent
+job_id=$(create_job)
+wait_job "$job_id"
 if auth_error=$(dc exec -T postgres sh -c 'PGPASSWORD=incorrect psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1"' 2>&1); then
     echo 'FAIL: PostgreSQL accepted incorrect password' >&2; exit 1;
 fi
@@ -82,8 +97,17 @@ dc exec -T victoriametrics wget -qO- http://127.0.0.1:8428/health
 dc exec -T grafana wget -qO- http://victoriametrics:8428/health
 dc exec -T grafana wget -qO- http://127.0.0.1:3000/api/health | grep -q '"database"[[:space:]]*:[[:space:]]*"ok"'
 dc exec -T metrics-collector python -m apps.shared.healthcheck monitoring
-dc exec -T victoriametrics wget -qO- http://metrics-collector:9101/metrics | grep -q '# TYPE ttcp_node_scrape_success gauge'
-dc exec -T victoriametrics wget -qO- http://metrics-collector:9101/metrics | grep -q '# TYPE ttcp_service_active gauge'
+# The collector also retains SQL connections across PostgreSQL replacement.
+# Exercise that existing process until its actual metrics query recovers.
+metrics_deadline=$((SECONDS + 45))
+for metric in ttcp_node_scrape_success ttcp_service_active; do
+    until dc exec -T victoriametrics wget -T 5 -qO- http://metrics-collector:9101/metrics 2>/dev/null | grep -q "# TYPE $metric gauge"; do
+        if (( SECONDS >= metrics_deadline )); then
+            echo 'FAIL: collector metrics did not recover after PostgreSQL replacement' >&2; exit 1
+        fi
+        sleep 0.2
+    done
+done
 for attempt in $(seq 1 12); do
     if dc exec -T victoriametrics wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=up%7Bjob%3D%22ttcp-managed-nodes%22%7D' | grep -q 'ttcp-managed-nodes'; then
         break
@@ -104,6 +128,7 @@ dc exec -T nginx sh -c 'wget -S -O /dev/null http://127.0.0.1:8080/api/example 2
 
 # Runtime failures must not turn liveness into a restart loop; readiness recovers.
 for dependency in redis postgres; do
+    api_before=$(api_identity)
     dc stop "$dependency"
     dc exec -T nginx wget -qO- http://api:8080/healthz | grep -q '"ok"'
     dc exec -T nginx sh -c 'wget -S -O /dev/null http://api:8080/readyz 2>&1 || true' | grep -q '503 Service'
@@ -117,7 +142,9 @@ for dependency in redis postgres; do
         echo "FAIL: API started without $dependency" >&2; exit 1
     fi
     dc up -d --wait --wait-timeout 120 "$dependency"
+    wait_api_recovery
     dc up -d --wait --wait-timeout 120 api worker
+    test "$(api_identity)" = "$api_before"
     dc exec -T nginx wget -qO- http://api:8080/readyz | grep -q '"ready"'
 done
 
