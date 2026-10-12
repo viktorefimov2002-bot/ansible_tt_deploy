@@ -56,7 +56,7 @@ contains only the public key. The account can write its home for Ansible tempora
 files but cannot change its authorized key or privilege helper. Sudo accepts only
 `/usr/local/sbin/ttcp-node-status`, `/usr/local/sbin/ttcp-node-credential` and
 `/usr/local/sbin/ttcp-node-lifecycle`
-**without arguments**. The latter accepts only credential create/revoke JSON on
+**without arguments**. The credential helper accepts only credential create/revoke JSON on
 stdin and updates `/opt/trusttunnel/credentials.toml` atomically. It does not grant shell,
 interpreter, package manager, systemctl restart or arbitrary Ansible become access.
 The helper reports fixed systemd service and process properties, the automatic

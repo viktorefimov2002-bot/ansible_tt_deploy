@@ -68,8 +68,10 @@ SQLAlchemy pool pre-ping и новые попытки Redis позволяют �
 | `/readyz`, `/api/readyz` | Проверка обоих хранилищ: 200 `ready` либо 503 `not_ready` |
 
 Readiness не раскрывает адреса, имена БД, credentials или исключения драйверов.
-Эти read-only endpoints публичны; бизнес-endpoints и документация API не включены.
-`/healthz` NGINX проверяет только NGINX; для приложения используйте `/api/readyz`.
+Эти read-only endpoints не требуют аутентификации внутри API. Бизнес-endpoints добавлены
+последующими TTCP-задачами, как описано выше. Web edge не публикует health/readiness API.
+`/healthz` NGINX проверяет только NGINX; для приложения используйте внутренний `/api/readyz`
+или `docker compose exec api python -m apps.shared.healthcheck api` с вашим набором Compose/env.
 
 Worker ждёт SIGTERM/SIGINT, периодически проверяет подключения и логирует изменения
 готовности и исполняет durable jobs согласно [контракту worker](../docs/jobs.md). Healthcheck

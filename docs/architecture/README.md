@@ -10,13 +10,15 @@
 
 ## Текущая реализация
 
-TTCP-003 добавляет [локальный Compose runtime](../../infra/compose/README.md):
-PostgreSQL, Redis, VictoriaMetrics, минимальную Grafana, NGINX и заглушки API/worker.
-Это инфраструктурная основа; приложения и интеграции следующих задач ещё не реализованы.
+TTCP-003 создал [локальный Compose runtime](../../infra/compose/README.md):
+PostgreSQL, Redis, VictoriaMetrics, Grafana, NGINX и первоначальные заглушки API/worker.
+Последующие задачи добавили реальный API/worker, оба frontend, управление серверами/VPN,
+мониторинг, ревизии и backups. Источники текущих процедур перечислены ниже;
+первый реальный запуск требует отдельной живой приёмки.
 
 На этапе TTCP-001 репозиторий содержит Ansible roles/playbooks и CLI `ttctl`: установку, настройку TLS/firewall, управление файловыми credentials, клиентскими конфигурациями и локальную диагностику. Эксплуатационные инструкции находятся в [Ansible README](../../automation/ansible/README.md), [P1 workflow](../../automation/ansible/docs/P1_USABILITY.md) и [описании мониторинга](../../automation/ansible/docs/MONITORING.md).
 
-Существующий `bootstrap.sh` относится к CLI/Ansible workflow. Отдельный [managed-node bootstrap](../node-bootstrap.md) реализован в TTCP-010 в `scripts/bootstrap-node.sh` для подготовки управляемого узла. Полный автоматический rollback Data Plane пока не реализован; [существующее руководство rollback](../ROLLBACK.md) не подтверждает наличие этой функции.
+Существующий `bootstrap.sh` относится к CLI/Ansible workflow. Отдельный [managed-node bootstrap](../node-bootstrap.md) реализован в TTCP-010 в `scripts/bootstrap-node.sh` для подготовки управляемого узла. TTCP-018 реализует [автоматический rollback неуспешного apply ревизии](../server-configuration.md); это не общий rollback любой lifecycle-операции. [Существующее руководство rollback](../ROLLBACK.md) сохраняет исторические CLI-процедуры. Для первого запуска используйте [руководство оператора](../guides/deployment-guide.md).
 
 ## Целевая архитектура MVP
 
@@ -26,16 +28,17 @@ NGINX обслуживает статические Admin Web и Client Portal �
 
 Control Plane не входит в путь VPN-трафика. Управление и proxy/runtime обязанности остаются разделёнными; детали границ и потоков приведены в разделах 2–6 основной спецификации.
 
-## Будущая документация компонентов
+## Документация компонентов
 
-Отдельные документы создаются в рамках соответствующих задач и добавляются в этот индекс после появления файлов. Пока точками входа служат разделы [основной спецификации](product-architecture-spec-v0.1.md):
+Документы добавлены последующими задачами. Таблица сохраняет связь с разделами
+[основной спецификации](product-architecture-spec-v0.1.md) и ведёт к текущим техническим инструкциям:
 
-| Будущий документ | Исходные разделы спецификации |
+| Техническая документация | Исходные разделы спецификации |
 | --- | --- |
-| API, доменная модель и PostgreSQL | 2, 4, 9–14, 17, 19, 21–23 |
-| Worker, jobs и Redis adapters | 2.2, 19–20, 30 |
-| Ansible adapter и managed-node onboarding | 5–8, 17 |
-| Admin Web и Client Portal | 15–16, 21, 25, 27 |
-| Observability, deployment и эксплуатация | 24–28, 30 |
+| [API](../../apps/README.md), [PostgreSQL](../persistence.md), [VPN model](../vpn.md) | 2, 4, 9–14, 17, 19, 21–23 |
+| [Worker, jobs и Redis adapters](../jobs.md) | 2.2, 19–20, 30 |
+| [Ansible adapter](../execution.md), [managed-node onboarding](../node-bootstrap.md), [lifecycle](../server-lifecycle.md) | 5–8, 17 |
+| [Admin Web](../admin-web.md) и [Client Portal](../client-portal.md) | 15–16, 21, 25, 27 |
+| [Observability](../admin-visibility.md), [deployment](../runbooks/control-plane-deployment.md), [backups](../backups.md) | 24–28, 30 |
 
 Нерешённые вопросы перечислены в [правилах ADR](../adr/README.md). Индекс не выбирает решения вместо профильных задач.

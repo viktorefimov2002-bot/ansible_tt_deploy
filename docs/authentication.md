@@ -2,7 +2,11 @@
 
 Implemented: password + TOTP login, expiring/revocable PostgreSQL sessions, reusable
 FastAPI request context and admin authorization, initial admin enrollment, audit.
-Identity CRUD, recovery/reset, client authentication and frontend UI are out of scope.
+Identity CRUD, recovery/reset, client authentication and frontend UI were outside TTCP-006 scope.
+Client authentication and both frontends were added later; operator instructions:
+[deployment](guides/deployment-guide.md), [Admin Web](guides/admin-web-guide.md),
+[Client Web](guides/client-web-guide.md). Admin/viewer identity CRUD and recovery/reset
+still have no operator UI.
 The supplied TTCP-006 request is the task scope; the architecture additionally requires
 TOTP, which is included. See [session decision](adr/0012-admin-auth-sessions.md).
 TTCP-015 adds [Admin Web](admin-web.md) and opt-in browser cookie transport

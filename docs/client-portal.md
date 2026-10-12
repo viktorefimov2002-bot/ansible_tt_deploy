@@ -1,5 +1,9 @@
 # TTCP-014 — Client Portal
 
+Russian end-user instructions: [Client Web guide](guides/client-web-guide.md).
+First-run HTTPS/mobile boundaries and acceptance: [deployment guide](guides/deployment-guide.md).
+The technical commands and past implementation notes below remain reference material.
+
 ## Run and deploy
 
 Client URL through Compose/NGINX: `http://vpn.localhost:8080/`.

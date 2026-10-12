@@ -1,5 +1,9 @@
 # Control Plane: локальный runtime (TTCP-003/004/005)
 
+Для первого запуска используйте [русское руководство оператора](../../docs/guides/deployment-guide.md)
+и [чек-лист](../../docs/guides/first-deployment-checklist.md). Ниже сохранён технический
+контекст последовательных TTCP-задач, обновлённый по текущему runtime.
+
 Основание: [архитектура](../../docs/architecture/product-architecture-spec-v0.1.md),
 разделы 4, 23–24, 28, 32–33, и [план MVP](../../docs/planning/mvp.md).
 Это среда разработки на Linux containers, не готовое production-развёртывание.
@@ -88,27 +92,33 @@ PostgreSQL применяет `POSTGRES_*` только при первом за
 | Сервис | Внутренний порт | Доступ с хоста | Сеть | Зависимости |
 | --- | --- | --- | --- | --- |
 | `nginx` | 8080 | `127.0.0.1:8080` | entrypoint, application | healthy api |
-| `api` (FastAPI) | 8080 | Нет | application, database, queue | healthy postgres, redis |
-| `worker` (durable jobs) | Нет | Нет | database, queue | healthy postgres, redis |
+| `api` (FastAPI) | 8080 | Нет | application, database, queue, metrics | healthy postgres, redis |
+| `worker` (durable jobs) | Нет | Нет | database, queue, management_egress, metrics | healthy postgres, redis |
 | `postgres` | 5432 | Нет | database | Нет |
 | `migrate` (одноразовый tools profile) | Нет | Нет | database | healthy postgres |
 | `redis` | 6379 | Нет | queue | Нет |
 | `victoriametrics` | 8428 | Нет | metrics | Нет |
 | `grafana` | 3000 | `127.0.0.1:3000` | entrypoint, metrics | healthy victoriametrics |
+| `metrics-collector` | 9101 | Нет | database, metrics, management_egress | healthy postgres |
 
-Все сети кроме `entrypoint` имеют `internal: true`. Сети database и queue
-доступны только соответствующему хранилищу и API/worker. NGINX и Grafana
+Сети `entrypoint` и `management_egress` разрешают внешний доступ; остальные
+имеют `internal: true`. Сети database и queue
+доступны соответствующему хранилищу и API/worker; к database также подключены
+collector и профильные migrate/backup-maintenance tools. NGINX и Grafana
 не подключены к ним. Сети не являются защитой от администратора Docker.
 Readiness API/worker проверяет SQL `SELECT 1` и Redis `PING`; worker исполняет [durable jobs](../../docs/jobs.md).
-Доступ worker к managed nodes добавляется с execution adapter.
+Worker и metrics-collector используют `management_egress` для исходящих SSH/DNS к managed nodes.
 
-NGINX `/healthz` — HTTP 200; `/` — HTTP 503 до появления frontend.
-`/api/healthz` — liveness API; `/api/readyz` — HTTP 200 при доступности PostgreSQL
-и Redis, иначе 503. Несуществующие API routes — 404. Healthcheck API проверяет
+NGINX `/healthz` на default loopback host — HTTP 200; `/` по IP — 404.
+На `admin.localhost` и `vpn.localhost` корень обслуживает соответствующий frontend.
+`/api/healthz` — liveness внутри API; `/api/readyz` — HTTP 200 при доступности PostgreSQL
+и Redis, иначе 503. Эти routes не входят в web edge allowlist: через NGINX они возвращают 404.
+Несуществующие API routes — 404. Healthcheck API проверяет
 readiness; worker — подключения отдельным probe-процессом (не прогресс jobs).
 Контракты, settings и lifecycle описаны в [apps/README.md](../../apps/README.md).
-TLS/ACME, реальные UI bundles и публичный доступ не входят в локальный runtime.
-Для production потребуется отдельная настройка NGINX/TLS и секретов.
+Реальные UI bundles собирает NGINX Dockerfile. Базовый runtime использует локальный HTTP;
+Secure cookies зависят от браузера. HTTPS overlay существует, выпуск/обновление сертификатов
+Control Plane и подготовка публичного доступа остаются работой оператора.
 
 ## Хранение и лимиты
 
@@ -132,7 +142,8 @@ Grafana — 256 MiB, NGINX — 64 MiB, API — 192 MiB, worker — 128 MiB. Ло
 (3 × 10 MiB на контейнер). Для Docker Desktop выделите минимум 2 GiB памяти;
 для дальнейшего развития предпочтительны 4 GiB. Retention VM ограничивает время,
 но не абсолютный размер диска. Named volumes не заменяют резервную копию.
-Remote encrypted backups и restore workflow остаются эксплуатационным этапом.
+Remote encrypted backups и maintenance restore реализованы отдельными opt-in overlays;
+storage/reader/key escrow и реальная off-host проверка остаются эксплуатационным этапом.
 
 Grafana включена согласно фазе 1 спецификации. Единственный provisioned datasource
 использует встроенный Prometheus-compatible тип и `http://victoriametrics:8428`.
@@ -198,12 +209,16 @@ healthchecks должны быть проверены в Docker-окружени
 ## Границы задачи
 
 Есть core PostgreSQL schema/migrations; [границы baseline](../../docs/persistence.md).
-Ansible adapter, server/VPN CRUD, node bootstrap и VPN lifecycle пока не реализованы.
+В исходном TTCP-003/004 baseline Ansible adapter, server/VPN CRUD, node bootstrap и
+VPN lifecycle не входили. Сейчас они реализованы; см. [execution](../../docs/execution.md),
+[servers](../../docs/servers.md), [VPN](../../docs/vpn.md), [bootstrap](../../docs/node-bootstrap.md)
+и [lifecycle](../../docs/server-lifecycle.md). Live SSH/systemd/ACME/VPN требуют приёмки.
 Аутентификация реализована в TTCP-006, jobs — в TTCP-007;
 [ADR-0013](../../docs/adr/0013-durable-job-worker.md) описывает выбор worker.
 Kafka, Vault и Kubernetes не добавляются.
 Новых архитектурных решений вне baseline нет; отдельный ADR для локальной
-конфигурации не требуется. Нумерованных принятых ADR пока нет в реестре.
+конфигурации не требуется. Текущие статусы решений, включая Accepted ADR-0014,
+см. в [реестре ADR](../../docs/adr/README.md); исторический baseline не отражает их последующее принятие.
 
 Справочные первоисточники: [PostgreSQL image](https://hub.docker.com/_/postgres),
 [Redis image](https://hub.docker.com/_/redis),

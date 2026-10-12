@@ -1,5 +1,9 @@
 # TTCP-015 — Admin Web core
 
+Operator instructions in Russian: [Admin Web guide](guides/admin-web-guide.md) and
+[first deployment](guides/deployment-guide.md). This technical document retains
+implementation and validation history.
+
 TTCP-020 adds **Backups**: latest outcome, history, verified snapshot age, job links
 and an admin-only fixed **Run backup now** action. History refreshes every five seconds.
 Viewers inspect only. Failed/unknown outcomes stay explicit; there is no restore UI.

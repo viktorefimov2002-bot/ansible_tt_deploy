@@ -1,5 +1,11 @@
 # Control Plane deployment
 
+For Windows/WSL2 and the first disposable Ubuntu VPS, follow the Russian
+[operator deployment guide](../guides/deployment-guide.md) and
+[first-deployment evidence checklist](../guides/first-deployment-checklist.md).
+The procedure below covers staging/production preparation; certificate issuance,
+role provisioning and live acceptance remain operator steps.
+
 Use [Compose runtime](../../infra/compose/README.md) and
 [admin bootstrap](../authentication.md). Record release/images and migration revision.
 
@@ -11,15 +17,17 @@ Use [Compose runtime](../../infra/compose/README.md) and
    owner. Create separate runtime/backup logins with protected DBA tooling; apply
    runtime-grants.sql/backup-grants.sql. Runtime must not own schema/mutate audit.
    Never print real `docker compose config` output: it expands secrets.
-4. Start from repository root:
+4. Start from repository root; replace `/secure/ttcp/runtime.env` below with your
+   protected absolute env path outside checkout:
 
 ```sh
-docker compose --env-file infra/compose/.env \
+docker compose --env-file /secure/ttcp/runtime.env \
   -f infra/compose/compose.yaml -f infra/compose/compose.production.yaml \
   -f infra/compose/compose.backup.yaml up -d --build
 ```
 
-5. Check container health, `/api/readyz`, TLS/origin isolation, admin/TOTP login, viewer
+5. Check container health and internal `/api/readyz` (not published by the web edge;
+   use `docker compose ... exec api python -m apps.shared.healthcheck api`), TLS/origin isolation, admin/TOTP login, viewer
    denial, worker/Redis recovery, collector/metrics and safe logs. Enroll initial
    admin using protected offline bootstrap.
 6. Run remote backup and [disposable restore drill](backup-restore.md). Assign age/

@@ -91,9 +91,10 @@ restart/recovery procedure. No audit pruning/retention changes are introduced.
 | CERTIFICATE_EXPIRING | No collected certificate `notAfter`, identity or proof it serves VPN connections. Domain/ACME flags and versions do not establish expiry. |
 | NETWORK_SATURATION | RX/TX rates lack validated usable interface capacity/provider shaping limits. Exporter speed is not a validated end-to-end capacity source. |
 | UPDATE_AVAILABLE | Running/desired versions are inventory, not an authenticated release/support feed for a suitable available update. |
-| BACKUP_FAILED | No implemented backup job/result source; backups are outside this task. |
+| BACKUP_FAILED | Outside TTCP-019 scope; subsequently implemented from durable backup job results in [TTCP-020](backups.md), independently of node metrics. |
 
-Telegram is also deferred. None of these types is guessed or emitted.
+Telegram is also deferred. The first three types are not guessed or emitted.
+BACKUP_FAILED is emitted by the later backup workflow, not the TTCP-019 metrics evaluator.
 
 ## Validation and manual acceptance
 

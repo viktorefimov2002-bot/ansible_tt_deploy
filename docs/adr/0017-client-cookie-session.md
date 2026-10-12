@@ -11,7 +11,9 @@ Secure/HttpOnly/SameSite=Strict cookie scoped to `/api/client`. PostgreSQL keeps
 only the existing token digest, absolute expiry and revocation state; no migration
 or refresh-token mechanism is needed. Browser exchange explicitly selects cookie
 mode and returns expiry metadata without the token. Retain TTCP-013 bearer exchange
-for CLI compatibility. Admin authentication remains bearer-only as in ADR-0012.
+for CLI compatibility. Admin authentication at TTCP-014 remained bearer-only as in
+ADR-0012; subsequent [ADR-0018](0018-admin-web-origins.md) adds opt-in Admin Web
+cookies while retaining bearer/CLI transport.
 
 Every cookie-authenticated API call and cookie-mode exchange requires the portal
 custom header. Reject cross-site/same-site fetch metadata and mismatched Origin

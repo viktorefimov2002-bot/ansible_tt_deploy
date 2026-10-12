@@ -1,6 +1,25 @@
 # TrustTunnel
 
-Текущая реализация — Ansible/CLI для установки и обслуживания TrustTunnel Endpoint.
+Репозиторий содержит Control Plane MVP и сохранённый Ansible/CLI для установки
+и обслуживания TrustTunnel Endpoint. Реальный запуск на VPS требует живой приёмки.
+
+## Getting started — с чего начать
+
+1. [Установка и первый запуск](docs/guides/deployment-guide.md): Windows/Docker Desktop/WSL2,
+   отдельный Ubuntu VPS, секреты, миграции, TOTP, HTTPS, bootstrap и первый deploy.
+2. [Руководство администратора](docs/guides/admin-web-guide.md): существующие экраны,
+   права, серверы, пользователи, задачи, мониторинг и восстановление.
+3. [Руководство пользователя VPN](docs/guides/client-web-guide.md): приглашение,
+   устройство, QR/deeplink/TOML и подключение.
+4. [Чек-лист первого развёртывания](docs/guides/first-deployment-checklist.md):
+   ручные PASS/FAIL и безопасные доказательства. [Протокол проверки документации](docs/guides/documentation-validation.md)
+   отделяет статические проверки от неподтверждённого live deployment.
+
+Локальный HTTP не гарантирует работу Secure cookies; localhost-ссылки недоступны
+с телефона. Подготовка доверенного HTTPS и остальные DOC/DEPLOY gaps описаны в руководстве.
+
+## Техническая документация и сохранённый CLI
+
 Автоматизация находится в [automation/ansible](automation/ansible/README.md).
 Локальная инфраструктура Control Plane: [Docker Compose runtime](infra/compose/README.md)
 (TTCP-003/004). [API и worker](apps/README.md) включают PostgreSQL persistence,
@@ -36,7 +55,8 @@ Live release sign-off uses the explicit [staging acceptance checklist](docs/runb
 [архитектура](docs/architecture/README.md), [ADR](docs/adr/README.md),
 [план MVP](docs/planning/mvp.md).
 
-Команды выполняются из корня репозитория:
+Следующие команды относятся к самостоятельному историческому Ansible/CLI workflow,
+а не к регистрации managed node через Admin Web. Выполняются из корня репозитория:
 
 ```bash
 ./scripts/install_requirements.sh --check-only
